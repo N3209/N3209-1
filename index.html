@@ -192,6 +192,17 @@
 
 </div>
 
+<!-- 狭い画面の検索。右下のボタンで下から出す。 -->
+<button id="btn-find-fab" class="fab" aria-label="検索" title="検索">🔍</button>
+
+<div id="find-sheet" class="sheet" hidden role="dialog" aria-label="検索">
+  <div class="sheet-head">
+    <span class="sheet-title">検索</span>
+    <button id="find-sheet-close" class="pop-close" aria-label="閉じる">×</button>
+  </div>
+  <div class="sheet-body" id="find-sheet-body"></div>
+</div>
+
 <!-- 本文を選択したときに出る色バー -->
 <div id="selbar" class="selbar" hidden>
   <button type="button" data-color="yellow" style="background:var(--mk-yellow)" title="黄"></button>

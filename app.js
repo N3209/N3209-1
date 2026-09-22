@@ -1384,8 +1384,47 @@ function setDrawer(open) {
   $('#scrim').hidden = !open;
 }
 
+/* 画面が狭いかどうか。検索欄の置き場所とドロワーの扱いがここで変わる。 */
+const narrowMQ = window.matchMedia ? window.matchMedia('(max-width: 800px)') : null;
+function narrow() { return !!(narrowMQ && narrowMQ.matches); }
+
+function setSheet(open) {
+  $('#find-sheet').hidden = !open;
+  $('#btn-find-fab').classList.toggle('on', open);
+  if (open) $('#find-input').focus();
+}
+
+/*
+ * 狭い画面には上段に検索欄を置く余地がない。右下のボタンから下に出る
+ * シートへ、検索欄と結果一覧を「移す」。作りを二重に持たない。同じ入力欄が
+ * 2つあると、どちらに打ったかで結果が変わる。
+ */
+function placeFind() {
+  const panel = $('#panel-find');
+  const find = $('.find');
+  if (narrow()) {
+    const body = $('#find-sheet-body');
+    if (find.parentElement !== body) body.append(panel, find);
+    panel.hidden = false;                       // シートの中では常に中身を出す
+    $('#tab-find').hidden = true;
+    if ($('#tab-find').classList.contains('on')) switchTab('laws');
+  } else {
+    if (find.parentElement !== $('.topbar')) {
+      $('.topbar').insertBefore(find, $('#btn-split'));
+      $('#pane-laws').insertBefore(panel, $('#panel-marks'));
+    }
+    $('#tab-find').hidden = false;
+    setSheet(false);
+    const on = $('.tabs button[data-tab].on');
+    switchTab(on ? on.dataset.tab : 'laws');
+  }
+}
+
+/* 行き先が決まったら、覆っているものをどける。 */
 function closeDrawerAfterJump() {
-  if (window.matchMedia && window.matchMedia('(max-width: 800px)').matches) setDrawer(false);
+  if (!narrow()) return;
+  setDrawer(false);
+  setSheet(false);
 }
 
 /** 移動の入口。法令内でも法令をまたいでも、ここを通れば履歴に残る。 */
@@ -2836,8 +2875,11 @@ function wireView() {
 }
 
 function switchTab(name) {
-  for (const b of $$('.tabs button')) b.classList.toggle('on', b.dataset.tab === name);
-  for (const id of ['laws', 'toc', 'find', 'marks']) $('#panel-' + id).hidden = id !== name;
+  for (const b of $$('.tabs button[data-tab]')) b.classList.toggle('on', b.dataset.tab === name);
+  for (const id of ['laws', 'toc', 'find', 'marks']) {
+    if (id === 'find' && narrow()) continue;    // シートの中にあるので隠さない
+    $('#panel-' + id).hidden = id !== name;
+  }
   try { localStorage.setItem('roppo.tab', name); } catch (e) { /* 使えなくても支障ない */ }
 }
 
@@ -2988,15 +3030,24 @@ function wireGlobal() {
   $('#btn-drawer-close').onclick = () => setDrawer(false);
   $('#scrim').onclick = () => setDrawer(false);
 
+  $('#btn-find-fab').onclick = () => setSheet($('#find-sheet').hidden);
+  $('#find-sheet-close').onclick = () => setSheet(false);
+  if (narrowMQ && narrowMQ.addEventListener) narrowMQ.addEventListener('change', placeFind);
+
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       setDrawer(false);
+      setSheet(false);
       closePopover();
     }
     if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goHistory(-1); }
     if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goHistory(1); }
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); $('#jump-input').focus(); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); $('#find-input').select(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      if (narrow()) setSheet(true);          // 欄はシートの中にあるので先に出す
+      $('#find-input').select();
+    }
     if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
   });
 
@@ -3062,6 +3113,7 @@ function registerServiceWorker() {
   let tab = 'laws';
   try { tab = localStorage.getItem('roppo.tab') || 'laws'; } catch (e) { /* 任意 */ }
   switchTab(tab);
+  placeFind();
   await loadNotes();
   await loadRanges();
   await refreshLawList();
