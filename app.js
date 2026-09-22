@@ -1375,9 +1375,23 @@ function updateNavButtons() {
   $('#btn-fwd').disabled = hi < 0 || hi >= hist.length - 1;
 }
 
+/*
+ * 狭い画面では左ペインが画面を覆うドロワーになる。開いている間は
+ * ☰ も条文も隠れるので、行き先を選んだら閉じる。
+ */
+function setDrawer(open) {
+  $('#pane-laws').classList.toggle('open', open);
+  $('#scrim').hidden = !open;
+}
+
+function closeDrawerAfterJump() {
+  if (window.matchMedia && window.matchMedia('(max-width: 800px)').matches) setDrawer(false);
+}
+
 /** 移動の入口。法令内でも法令をまたいでも、ここを通れば履歴に残る。 */
 async function navigate(lawId, anchor) {
   rememberPos();
+  closeDrawerAfterJump();
   if (!P().current || P().current.lawId !== lawId) await openLaw(lawId, anchor);
   else if (anchor) scrollToAnchor(anchor, false);
   if (!navigating) pushHist({ lawId, anchor: anchor || null, scrollTop: P().el.scrollTop });
@@ -1712,6 +1726,7 @@ function renderToc() {
       const target = $('#' + e.id, P().el);      // 両面で同じidを使うので面を限る
       if (!target) return;
       rememberPos();
+      closeDrawerAfterJump();
       target.scrollIntoView({ block: 'start', behavior: 'smooth' });
       pushHist({ lawId: P().current.lawId, anchor: null, scrollTop: target.offsetTop });
       if (window.innerWidth <= 800) $('#pane-laws').classList.remove('open');
@@ -2969,11 +2984,13 @@ function wireGlobal() {
   $('#btn-back').onclick = () => goHistory(-1);
   $('#btn-fwd').onclick = () => goHistory(1);
 
-  $('#btn-menu').onclick = () => $('#pane-laws').classList.toggle('open');
+  $('#btn-menu').onclick = () => setDrawer(!$('#pane-laws').classList.contains('open'));
+  $('#btn-drawer-close').onclick = () => setDrawer(false);
+  $('#scrim').onclick = () => setDrawer(false);
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      $('#pane-laws').classList.remove('open');
+      setDrawer(false);
       closePopover();
     }
     if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goHistory(-1); }

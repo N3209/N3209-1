@@ -200,6 +200,19 @@ body.resizing { cursor: col-resize; user-select: none; }
   background: var(--bg-elev); border-color: var(--line);
   color: var(--fg); font-weight: 600; margin-bottom: -1px;
 }
+/* 狭い画面ではドロワーが画面全体を覆い、☰ が下敷きになって押せない。
+   タブの行の右端に閉じるボタンを出す。広い画面では要らない。 */
+.tab-close {
+  display: none; flex: none; width: 30px;
+  border: 1px solid transparent; background: none; color: var(--fg-dim);
+  cursor: pointer; font-size: 17px; line-height: 1; border-radius: 8px;
+}
+.tab-close:hover { color: var(--fg); background: var(--bg-hover); }
+
+/* ドロワーの外側。触れば閉じる。 */
+.scrim { position: fixed; inset: 0; z-index: 29; background: rgba(17, 20, 24, .32); }
+.scrim[hidden] { display: none; }
+
 .tab-body { flex: 1; overflow-y: auto; background: var(--bg-elev); border-top: 1px solid var(--line); padding: 10px; }
 
 .filter {
@@ -685,6 +698,7 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
     width: min(300px, 82vw); z-index: 30; box-shadow: var(--shadow);
   }
   #btn-menu { display: block; }
+  .tab-close { display: block; }
   .brand { display: none; }
 
   /* 上段に全部は並ばない。検索欄を2行目に回す。
