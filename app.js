@@ -1325,6 +1325,9 @@ function wirePanes() {
 
   let wantSplit = false;
   try { wantSplit = localStorage.getItem('roppo.split') === '1'; } catch (e) { /* 任意 */ }
+  // 狭い画面では2面に割るボタンを隠している。記憶した状態を復元すると、
+  // 戻す手段が無いまま2面のままになる。
+  if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) wantSplit = false;
   setSplit(wantSplit);
 }
 

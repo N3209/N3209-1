@@ -686,9 +686,20 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   }
   #btn-menu { display: block; }
   .brand { display: none; }
-  .jump input { width: 104px; }
-  .find { display: none; }
+
+  /* 上段に全部は並ばない。検索欄を2行目に回す。
+     消してしまうと、スマホでは条文番号でしか引けなくなる。 */
+  .topbar { flex-wrap: wrap; row-gap: 8px; }
+  .jump { flex: 1 1 auto; }
+  .jump input { flex: 1; width: auto; min-width: 84px; }
+  .find { flex: 1 1 100%; order: 10; }
+
   .content { padding: 16px 16px 45vh; }
   .law-header { padding: 12px 16px 8px; }
   .has-memo::after { left: -10px; }
+}
+
+@media (max-width: 640px) {
+  /* この幅で2面に割っても、どちらも読めない */
+  #btn-split { display: none; }
 }
