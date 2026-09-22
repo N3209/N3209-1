@@ -1388,31 +1388,50 @@ function setDrawer(open) {
 const narrowMQ = window.matchMedia ? window.matchMedia('(max-width: 800px)') : null;
 function narrow() { return !!(narrowMQ && narrowMQ.matches); }
 
-function setSheet(open) {
-  $('#find-sheet').hidden = !open;
-  $('#btn-find-fab').classList.toggle('on', open);
-  if (open) $('#find-input').focus();
+/* シートの中のどちらを出すか。番号で引くのが既定。 */
+function switchSheetTab(name) {
+  for (const b of $$('#sheet-tabs button')) b.classList.toggle('on', b.dataset.sheet === name);
+  $('#sheet-jump').hidden = name !== 'jump';
+  $('#sheet-find').hidden = name !== 'find';
+  try { localStorage.setItem('roppo.sheetTab', name); } catch (e) { /* 任意 */ }
+}
+
+function setSheet(open, which) {
+  if (which) switchSheetTab(which);
+  $('#lookup-sheet').hidden = !open;
+  $('#btn-lookup-fab').classList.toggle('on', open);
+  if (!open) return;
+  const jump = !$('#sheet-jump').hidden;
+  $(jump ? '#jump-input' : '#find-input').focus();
 }
 
 /*
- * 狭い画面には上段に検索欄を置く余地がない。右下のボタンから下に出る
- * シートへ、検索欄と結果一覧を「移す」。作りを二重に持たない。同じ入力欄が
- * 2つあると、どちらに打ったかで結果が変わる。
+ * 狭い画面には上段に欄を並べる余地がない。右下のボタンから下に出るシートへ、
+ * 番号の欄と検索の欄を「移す」。作りを二重に持たない。同じ入力欄が2つあると、
+ * どちらに打ったかで結果が変わる。
  */
-function placeFind() {
-  const panel = $('#panel-find');
-  const find = $('.find');
+function placeLookup() {
+  const jump = $('.jump'), find = $('.find'), panel = $('#panel-find');
+  const pad = $('#keypad'), input = $('#jump-input');
   if (narrow()) {
-    const body = $('#find-sheet-body');
-    if (find.parentElement !== body) body.append(panel, find);
-    panel.hidden = false;                       // シートの中では常に中身を出す
+    if (jump.parentElement !== $('#sheet-jump')) {
+      $('#sheet-jump').append(jump);
+      $('#sheet-find').append(panel, find);
+    }
+    pad.hidden = false;           // シートでは盤を常に出す。切替ボタンは隠してある
+    input.inputMode = 'none';     // 盤が目の前にあるので、端末のキーボードは出さない
+    panel.hidden = false;         // シートの中では常に中身を出す
     $('#tab-find').hidden = true;
     if ($('#tab-find').classList.contains('on')) switchTab('laws');
   } else {
-    if (find.parentElement !== $('.topbar')) {
+    if (jump.parentElement !== $('.topbar')) {
+      // 上段の並びは ← → / 番号 / 検索 / 2面 / 表示 の順に戻す
+      $('.topbar').insertBefore(jump, $('#btn-split'));
       $('.topbar').insertBefore(find, $('#btn-split'));
       $('#pane-laws').insertBefore(panel, $('#panel-marks'));
     }
+    input.inputMode = 'numeric';
+    try { pad.hidden = localStorage.getItem('roppo.pad') !== '1'; } catch (e) { pad.hidden = true; }
     $('#tab-find').hidden = false;
     setSheet(false);
     const on = $('.tabs button[data-tab].on');
@@ -2908,6 +2927,7 @@ function wireKeypad() {
 
   // 盤の外を押したら閉じる（入力欄と盤自身は除く）
   document.addEventListener('pointerdown', e => {
+    if (narrow()) return;           // シートの中では出しっぱなしにする
     if (pad.hidden) return;
     if (e.target.closest('.jump')) return;
     setOpen(false);
@@ -3030,9 +3050,12 @@ function wireGlobal() {
   $('#btn-drawer-close').onclick = () => setDrawer(false);
   $('#scrim').onclick = () => setDrawer(false);
 
-  $('#btn-find-fab').onclick = () => setSheet($('#find-sheet').hidden);
-  $('#find-sheet-close').onclick = () => setSheet(false);
-  if (narrowMQ && narrowMQ.addEventListener) narrowMQ.addEventListener('change', placeFind);
+  $('#btn-lookup-fab').onclick = () => setSheet($('#lookup-sheet').hidden);
+  $('#lookup-sheet-close').onclick = () => setSheet(false);
+  for (const b of $$('#sheet-tabs button')) {
+    b.onclick = () => setSheet(true, b.dataset.sheet);
+  }
+  if (narrowMQ && narrowMQ.addEventListener) narrowMQ.addEventListener('change', placeLookup);
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
@@ -3042,10 +3065,14 @@ function wireGlobal() {
     }
     if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goHistory(-1); }
     if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goHistory(1); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); $('#jump-input').focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      if (narrow()) { setSheet(true, 'jump'); return; }   // 欄はシートの中にある
+      $('#jump-input').focus();
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
-      if (narrow()) setSheet(true);          // 欄はシートの中にあるので先に出す
+      if (narrow()) { setSheet(true, 'find'); return; }
       $('#find-input').select();
     }
     if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
@@ -3113,7 +3140,10 @@ function registerServiceWorker() {
   let tab = 'laws';
   try { tab = localStorage.getItem('roppo.tab') || 'laws'; } catch (e) { /* 任意 */ }
   switchTab(tab);
-  placeFind();
+  let sheetTab = 'jump';
+  try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
+  switchSheetTab(sheetTab);
+  placeLookup();
   await loadNotes();
   await loadRanges();
   await refreshLawList();

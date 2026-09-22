@@ -17,7 +17,7 @@
  * 読み込み直すことになるため、断りなしには行わない。
  */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = 'roppo-shell-' + VERSION;
 
 // 殻を構成するファイル。法令データは含めない。

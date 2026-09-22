@@ -192,15 +192,21 @@
 
 </div>
 
-<!-- 狭い画面の検索。右下のボタンで下から出す。 -->
-<button id="btn-find-fab" class="fab" aria-label="検索" title="検索">🔍</button>
+<!-- 狭い画面の「引く」。一番よく使う操作なので、右下の親指の位置に置く。 -->
+<button id="btn-lookup-fab" class="fab" aria-label="引く" title="引く">引く</button>
 
-<div id="find-sheet" class="sheet" hidden role="dialog" aria-label="検索">
+<div id="lookup-sheet" class="sheet" hidden role="dialog" aria-label="引く">
   <div class="sheet-head">
-    <span class="sheet-title">検索</span>
-    <button id="find-sheet-close" class="pop-close" aria-label="閉じる">×</button>
+    <div class="sheet-tabs" id="sheet-tabs">
+      <button type="button" data-sheet="jump" class="on">番号で引く</button>
+      <button type="button" data-sheet="find">ことばで探す</button>
+    </div>
+    <button id="lookup-sheet-close" class="pop-close" aria-label="閉じる">×</button>
   </div>
-  <div class="sheet-body" id="find-sheet-body"></div>
+  <div class="sheet-body">
+    <div class="sheet-pane" id="sheet-jump"></div>
+    <div class="sheet-pane" id="sheet-find" hidden></div>
+  </div>
 </div>
 
 <!-- 本文を選択したときに出る色バー -->

@@ -213,15 +213,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .scrim { position: fixed; inset: 0; z-index: 29; background: rgba(17, 20, 24, .32); }
 .scrim[hidden] { display: none; }
 
-/* 右下の検索ボタン。親指の届くところに置く。広い画面では上段に欄があるので出さない。 */
+/* 右下の「引く」。一番よく使う操作を親指の位置に置く。
+   広い画面では上段に欄があるので出さない。 */
 .fab {
   display: none; position: fixed; z-index: 34;
   right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
-  width: 52px; height: 52px; border-radius: 26px; font-size: 21px; line-height: 1;
-  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  width: 56px; height: 56px; border-radius: 28px;
+  font: inherit; font-family: var(--font-body); font-size: 15px; font-weight: 700; line-height: 1;
+  border: none; background: var(--accent); color: #fff;
   box-shadow: var(--shadow); cursor: pointer;
 }
-.fab.on { background: var(--accent-bg); border-color: var(--accent); }
+.fab.on { filter: brightness(.92); }
 
 /* 下から出るシート。条文を隠しきらないよう、画面の下半分までに収める。 */
 .sheet {
@@ -234,15 +236,42 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sheet[hidden] { display: none; }
 .sheet-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px 6px; flex: none;
+  gap: 8px; padding: 10px 12px 8px; flex: none;
 }
-.sheet-title { font-size: 12.5px; font-weight: 700; color: var(--fg-dim); letter-spacing: .08em; }
-/* 結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
+.sheet-tabs { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.sheet-tabs button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg); color: var(--fg-dim);
+  border-radius: 9px; padding: 8px 4px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.sheet-tabs button.on {
+  background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 700;
+}
+
 .sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 12px; }
-.sheet-body #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
-.sheet-body .find { flex: none; margin-top: 10px; }
-.sheet-body .find input {
-  width: 100%; height: 38px; border: 1px solid var(--line); border-radius: 9px;
+.sheet-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sheet-pane[hidden] { display: none; }
+
+/* 番号で引く。電話と同じ並びで、入力欄が上、盤が下。 */
+.sheet-pane .jump { display: flex; flex-direction: column; gap: 8px; }
+.sheet-pane .jump input {
+  width: 100%; height: 42px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--bg); color: var(--fg); padding: 0 12px;
+  font: inherit; font-size: 18px; letter-spacing: .04em;
+}
+.sheet-pane #btn-pad { display: none; }      /* 盤は常に出ているので切替は要らない */
+.sheet-pane .jump > .go { display: none; }   /* 「引く」は盤の中にある */
+.sheet-pane .keypad {
+  position: static; width: 100%; padding: 0; gap: 8px;
+  border: none; box-shadow: none; background: none;
+  grid-template-columns: repeat(4, 1fr);
+}
+.sheet-pane .keypad button { height: 48px; font-size: 19px; }
+
+/* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
+.sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
+.sheet-pane .find { flex: none; margin-top: 10px; }
+.sheet-pane .find input {
+  width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 9px;
   background: var(--bg); color: var(--fg); padding: 0 12px; font: inherit; font-size: 15px;
 }
 
@@ -732,13 +761,10 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   }
   #btn-menu { display: block; }
   .tab-close { display: block; }
-  .brand { display: none; }
 
-  /* 上段に全部は並ばない。検索欄は右下のボタンから出すシートへ移す
-     （placeFind が DOM ごと動かす）。消すと条文番号でしか引けなくなる。 */
-  .jump { flex: 1 1 auto; }
-  .jump input { flex: 1; width: auto; min-width: 84px; }
-  #btn-find-fab { display: block; }
+  /* 上段に全部は並ばない。番号の欄も検索の欄も、右下から出すシートへ移す
+     （placeLookup が DOM ごと動かす）。消すと引く手立てが無くなる。 */
+  #btn-lookup-fab { display: block; }
 
   .content { padding: 16px 16px 45vh; }
   .law-header { padding: 12px 16px 8px; }
