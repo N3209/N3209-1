@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>六法</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="六法">
+</head>
+<body>
+
+<header class="topbar">
+  <button id="btn-menu" class="icon-btn" aria-label="法令と目次">☰</button>
+  <h1 class="brand">六法</h1>
+
+  <div class="nav">
+    <button id="btn-back" class="icon-btn" aria-label="戻る" title="戻る (Alt+←)" disabled>←</button>
+    <button id="btn-fwd" class="icon-btn" aria-label="進む" title="進む (Alt+→)" disabled>→</button>
+  </div>
+
+  <div class="jump">
+    <input id="jump-input" type="text" inputmode="numeric" autocomplete="off"
+           placeholder="709 / 709条2項" aria-label="条文番号でジャンプ">
+    <button id="btn-pad" class="icon-btn" aria-label="テンキー" title="テンキー">⌗</button>
+    <button id="jump-go" class="go">引く</button>
+
+    <div id="keypad" class="keypad" hidden>
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="条" class="unit">条</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="項" class="unit">項</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k="号" class="unit">号</button>
+      <button data-k="の" class="unit">の</button>
+      <button data-k="0">0</button>
+      <button data-k="⌫" class="del">⌫</button>
+      <button data-k="✓" class="go">引く</button>
+    </div>
+  </div>
+
+  <div class="find">
+    <input id="find-input" type="search" autocomplete="off"
+           placeholder="本文・メモを検索" aria-label="全文検索">
+  </div>
+
+  <button id="btn-split" class="icon-btn" aria-label="2面に分ける" title="2面に分ける">⫿⫿</button>
+
+  <div class="view">
+    <button id="btn-view" class="icon-btn" aria-label="表示設定" title="表示設定">Aa</button>
+
+    <div id="viewpad" class="viewpad" hidden>
+      <p class="note-label">書体</p>
+      <div class="font-picker" id="font-picker">
+        <button type="button" data-font="mincho">明朝</button>
+        <button type="button" data-font="gothic">ゴシック</button>
+        <button type="button" data-font="meiryo">メイリオ</button>
+        <button type="button" data-font="ud">UDゴシック</button>
+      </div>
+
+      <p class="note-label">文字の大きさ　<span id="size-val" class="val"></span></p>
+      <input id="size-range" type="range" min="13" max="24" step="1">
+
+      <p class="note-label">行間　<span id="leading-val" class="val"></span></p>
+      <input id="leading-range" type="range" min="14" max="26" step="1">
+
+      <p class="note-label">書き込みの色</p>
+      <div class="font-picker" id="ink-picker">
+        <button type="button" data-ink="#1558b8">青</button>
+        <button type="button" data-ink="#1e7a46">緑</button>
+        <button type="button" data-ink="#b3261e">赤</button>
+        <button type="button" data-ink="#5c6068">灰</button>
+      </div>
+
+      <p class="note-label">括弧書き</p>
+      <div class="font-picker" id="paren-picker" style="grid-template-columns:1fr 1fr">
+        <button type="button" data-paren="plain">そのまま</button>
+        <button type="button" data-paren="dim">薄く</button>
+      </div>
+
+      <p class="note-label">注釈の表示</p>
+      <div class="font-picker" id="annot-picker" style="grid-template-columns:1fr 1fr 1fr">
+        <button type="button" data-annot="all">すべて</button>
+        <button type="button" data-annot="marks">印だけ</button>
+        <button type="button" data-annot="none">隠す</button>
+      </div>
+
+      <p class="note-label">本文の幅</p>
+      <div class="font-picker" id="measure-picker">
+        <button type="button" data-measure="36">狭い</button>
+        <button type="button" data-measure="46">標準</button>
+        <button type="button" data-measure="60">広い</button>
+        <button type="button" data-measure="0">全幅</button>
+      </div>
+
+      <button type="button" id="view-reset" class="mini">既定に戻す</button>
+    </div>
+  </div>
+
+</header>
+
+<div class="layout">
+
+  <!-- 左: 法令 / 目次 / マーク -->
+  <aside id="pane-laws" class="pane pane-left">
+    <div class="tabs" role="tablist">
+      <button id="tab-laws" class="on" data-tab="laws">法令</button>
+      <button id="tab-toc" data-tab="toc">目次</button>
+      <button id="tab-marks" data-tab="marks">マーク</button>
+      <button id="tab-find" data-tab="find">検索</button>
+    </div>
+
+    <div class="tab-body" id="panel-laws">
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="law-filter" type="search" class="filter" style="margin:0" placeholder="取込済みを絞り込む">
+        <button id="btn-add-law" class="mini" style="white-space:nowrap">＋ 追加</button>
+        <button id="btn-export" class="mini" title="書き出しと復元">⤓</button>
+      </div>
+      <ul id="law-list" class="law-list"></ul>
+    </div>
+
+    <div class="tab-body" id="panel-toc" hidden>
+      <ul id="toc-list" class="toc-list"></ul>
+    </div>
+
+    <div class="tab-body" id="panel-find" hidden>
+      <div class="find-scope">
+        <div class="seg" id="find-where">
+          <button type="button" data-where="law" class="on">この法令</button>
+          <button type="button" data-where="all">全法令</button>
+        </div>
+        <div class="find-target">
+          <label><input type="checkbox" id="find-in-text" checked> 本文</label>
+          <label><input type="checkbox" id="find-in-notes" checked> メモ・タグ</label>
+        </div>
+        <div class="find-status" id="find-status"></div>
+      </div>
+      <ul id="find-list" class="find-list"></ul>
+    </div>
+
+    <div class="tab-body" id="panel-marks" hidden>
+      <div id="orphan-box" hidden>
+        <div class="sub-head orphan-head">要確認　<span id="orphan-count"></span></div>
+        <ul id="orphan-list" class="mark-list"></ul>
+      </div>
+      <ul id="mark-list" class="mark-list"></ul>
+      <div class="sub-head">文字タグ</div>
+      <ul id="tag-list" class="mark-list"></ul>
+    </div>
+  </aside>
+
+  <div id="split-side" class="splitter" role="separator" aria-label="左ペインの幅"></div>
+
+  <!-- 中央: 条文。並べて見比べられるよう2面ある。 -->
+  <main id="panes" class="pane pane-main">
+    <section class="lawpane active" data-pane="0">
+      <div class="law-header" hidden>
+        <div class="law-title"></div>
+        <div class="law-meta"></div>
+        <div class="crumb" hidden></div>
+      </div>
+      <div class="content">
+        <div class="empty">
+          <p>法令が取り込まれていません。</p>
+          <p><button id="btn-add-law-2" class="primary">法令を追加する</button></p>
+          <p class="hint">e-Gov 法令API から取得します。取り込んだ法令は端末内に保存され、オフラインでも読めます。</p>
+        </div>
+      </div>
+    </section>
+
+    <div id="split-panes" class="splitter" role="separator" aria-label="2面の幅" hidden></div>
+
+    <section class="lawpane" data-pane="1" hidden>
+      <div class="law-header" hidden>
+        <div class="law-title"></div>
+        <div class="law-meta"></div>
+        <div class="crumb" hidden></div>
+      </div>
+      <div class="content">
+        <div class="empty"><p class="hint">左の一覧から法令を選ぶと、ここに並べて表示します。</p></div>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<!-- 本文を選択したときに出る色バー -->
+<div id="selbar" class="selbar" hidden>
+  <button type="button" data-color="yellow" style="background:var(--mk-yellow)" title="黄"></button>
+  <button type="button" data-color="green"  style="background:var(--mk-green)"  title="緑"></button>
+  <button type="button" data-color="blue"   style="background:var(--mk-blue)"   title="青"></button>
+  <button type="button" data-color="red"    style="background:var(--mk-red)"    title="赤"></button>
+  <button type="button" data-color="orange" style="background:var(--mk-orange)" title="橙"></button>
+  <button type="button" data-color="purple" style="background:var(--mk-purple)" title="紫"></button>
+  <button type="button" id="selbar-memo" class="memo">メモ</button>
+</div>
+
+<!-- 選択した条文の近くに出る注釈パネル -->
+<div id="popover" class="popover" hidden role="dialog" aria-label="注釈">
+  <div class="popover-head">
+    <span id="pop-anchor" class="pop-anchor"></span>
+    <button id="pop-close" class="pop-close" aria-label="閉じる">×</button>
+  </div>
+  <div class="popover-body" id="notes-body"></div>
+</div>
+
+<dialog id="dlg-add">
+  <form method="dialog" class="dlg-form">
+    <h2>法令を追加</h2>
+    <div class="row">
+      <input id="add-query" type="search" placeholder="法令名（例: 民法、行政手続）" autocomplete="off">
+      <button id="add-search" value="search" class="primary">検索</button>
+    </div>
+    <div id="add-results" class="add-results"></div>
+    <menu class="dlg-actions"><button value="close">閉じる</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-export">
+  <form method="dialog" class="dlg-form">
+    <h2>書き出しと復元</h2>
+
+    <p class="note-label">バックアップ</p>
+    <p class="hint" style="margin:0 0 8px">
+      取り込んだ全法令（無加工のXML）と、すべてのタグ・メモ・マークを1ファイルにまとめます。
+      条文は e-Gov から取り直せますが、注釈は取り返せません。
+    </p>
+    <div class="row">
+      <button type="button" id="exp-backup" class="primary">バックアップを書き出す</button>
+      <button type="button" id="exp-restore" class="mini">復元する…</button>
+      <input id="restore-file" type="file" accept="application/json,.json" hidden>
+    </div>
+
+    <div id="export-law" style="margin-top:18px"></div>
+
+    <menu class="dlg-actions"><button value="close">閉じる</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-find">
+  <form method="dialog" class="dlg-form">
+    <h2>検索結果 <span id="find-count" class="count"></span></h2>
+    <div id="find-results" class="find-results"></div>
+    <menu class="dlg-actions"><button value="close">閉じる</button></menu>
+  </form>
+</dialog>
+
+<div id="tip" class="tip" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
