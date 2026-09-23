@@ -1012,11 +1012,14 @@ function renderLawList() {
   for (const l of list) {
     const li = document.createElement('li');
     li.className = P().current && P().current.lawId === l.lawId ? 'active' : '';
-    const a = amendOf(l.lawId);
+    const a = l.revisionOf ? null : amendOf(l.lawId);
     li.innerHTML = `<span class="law-name" title="${esc(l.lawTitle)}">${esc(l.lawTitle)}</span>`
-      + (a ? `<span class="amend-dot ${a.kind === 'upcoming' ? 'upcoming' : ''}" title="${esc(amendTitle(a))}"></span>` : '')
+      + (l.unenforced ? '<span class="rev-badge">未施行</span>' : '')
+      + (a ? `<span class="amend-dot ${a.kind === 'upcoming' ? 'upcoming' : ''}" title="${esc(amendTitle(a))}　押すと版を選べます"></span>` : '')
       + `<button class="del" title="削除">×</button>`;
     li.querySelector('.law-name').onclick = () => navigate(l.lawId);
+    const dotEl = li.querySelector('.amend-dot');
+    if (dotEl) dotEl.onclick = e => { e.stopPropagation(); openRevisions(l.lawId); };
     li.querySelector('.del').onclick = async e => {
       e.stopPropagation();
       if (!confirm(`「${l.lawTitle}」を削除します。\nこの法令に付けたタグ・メモは残ります。よろしいですか？`)) return;
@@ -1063,6 +1066,13 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
     rec.lawNum,
     rec.enforcementDate ? '施行: ' + rec.enforcementDate : '',
   ].filter(Boolean).join('　/　');
+  const warn = $('.law-warn', pane.root);
+  warn.hidden = !rec.unenforced;
+  warn.textContent = rec.unenforced
+    ? '未施行　' + rec.enforcementDate + ' 施行予定'
+      + (rec.amendLawTitle ? '（' + rec.amendLawTitle + '）' : '')
+    : '';
+
   pane.header.hidden = false;
   pane.el.innerHTML = html;
   syncTopbarLaw();
@@ -1104,10 +1114,13 @@ function unwrapRef(a) {
  */
 function lawByName(name) {
   if (!name) return null;
-  const exact = state.laws.find(l => l.lawTitle === name || l.abbrev === name);
+  // 別の版として取り込んだものは、名前で引く対象にしない。
+  // 本文に「民法」と書いてあるリンクが未施行の版へ飛んだら、取り違えに気づけない。
+  const pool = state.laws.filter(l => !l.revisionOf);
+  const exact = pool.find(l => l.lawTitle === name || l.abbrev === name);
   if (exact) return exact;
   let best = null;
-  for (const l of state.laws) {
+  for (const l of pool) {
     if (!l.lawTitle || !name.endsWith(l.lawTitle)) continue;
     const before = name.slice(0, name.length - l.lawTitle.length);
     // 「地方法人税法」を「法人税法」と取り違えないよう、直前が漢字・カタカナなら採らない。
@@ -1921,6 +1934,89 @@ function checkAmendmentsIfStale() {
 function amendOf(lawId) {
   const a = amendState[lawId];
   return (a && a.kind && a.kind !== 'none') ? a : null;
+}
+
+/*
+ * 版の一覧を出して、選んだ版を取り込む。
+ *
+ * 選んだ版は「別の法令」として持つ。いま読んでいる版を置き換えない。
+ * 未施行の条文を覗いたせいで、いま効いている条文が手元から消えるのが
+ * 一番まずい。圏外なら取り直せない。
+ *
+ * そのぶん、注釈は版ごとに別になる。同じ条文に見えても中身が違うので、
+ * これは正しい分かれ方である。
+ */
+async function openRevisions(lawId) {
+  const law = state.laws.find(l => l.lawId === lawId);
+  if (!law) return;
+  const base = law.revisionOf || law.lawId;
+  const baseLaw = state.laws.find(l => l.lawId === base) || law;
+
+  $('#rev-law').textContent = baseLaw.lawTitle || '';
+  const box = $('#rev-list');
+  box.innerHTML = '<p class="hint">e-Gov に問い合わせています…</p>';
+  $('#dlg-revisions').showModal();
+
+  let revs;
+  try {
+    revs = await apiRevisions(base);
+  } catch (e) {
+    box.innerHTML = '<p class="hint">版の一覧を取得できませんでした。通信を確かめてください。</p>';
+    return;
+  }
+
+  // 新しい順。施行日が入っていないものは出しようがないので外す。
+  revs = revs.filter(r => r.amendment_enforcement_date)
+    .sort((a, b) => (a.amendment_enforcement_date < b.amendment_enforcement_date ? 1 : -1));
+  if (!revs.length) { box.innerHTML = '<p class="hint">版の情報がありません。</p>'; return; }
+
+  const now = today();
+  const held = new Set(state.laws.map(l => l.lawRevisionId).filter(Boolean));
+
+  box.innerHTML = '';
+  for (const r of revs) {
+    const future = r.amendment_enforcement_date > now;
+    const mine = held.has(r.law_revision_id);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = `<span class="rv-date">${esc(r.amendment_enforcement_date)}</span>`
+      + `<span class="rv-title">${esc(r.amendment_law_title || '')}</span>`
+      + `<span class="rv-state ${mine ? 'now' : future ? 'future' : 'past'}">`
+      + (mine ? '手元にある' : future ? '未施行' : '施行済み') + '</span>';
+    if (mine) b.disabled = true;
+    else b.onclick = () => takeRevision(baseLaw, r, future);
+    box.appendChild(b);
+  }
+}
+
+async function takeRevision(baseLaw, rev, future) {
+  const id = baseLaw.lawId + '@' + rev.law_revision_id;
+  $('#dlg-revisions').close();
+
+  if (!state.laws.some(l => l.lawId === id)) {
+    toast('取り込んでいます…');
+    let xml;
+    try {
+      xml = await apiFetchLaw(rev.law_revision_id);
+    } catch (e) {
+      toast('取り込めませんでした: ' + e.message);
+      return;
+    }
+    await store.putLaw({
+      lawId: id,
+      lawTitle: (baseLaw.lawTitle || '') + '（' + rev.amendment_enforcement_date + ' 施行）',
+      lawNum: baseLaw.lawNum,
+      abbrev: null,                       // 略称で引けると本来の法令と紛れる
+      revisionOf: baseLaw.lawId,
+      lawRevisionId: rev.law_revision_id,
+      enforcementDate: rev.amendment_enforcement_date,
+      unenforced: !!future,
+      amendLawTitle: rev.amendment_law_title || '',
+      xml, savedAt: Date.now(),
+    });
+    await refreshLawList();
+  }
+  await navigate(id);
 }
 
 function amendTitle(a) {
@@ -3279,9 +3375,21 @@ function bindPaneEvents(pane) {
     // 文字を選択している最中は編集を開かない（範囲注釈を付けたいだけのことが多い）
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
-    const el = e.target.closest('[data-anchor]');
-    if (!el) return;
-    selectAnchor(el.dataset.anchor, true, pane);
+
+    /*
+     * 注釈欄を開くのは、条・項・号の「番号」を押したときだけにする。
+     * 本文のどこを触っても開くと、読んでいるだけで欄が出てきて邪魔になる。
+     * 番号はその単位を指す取っ手なので、押す先としても分かりやすい。
+     */
+    const num = e.target.closest('.article-title, .article-caption, .para-num, .item-title');
+    if (!num) return;
+
+    // 条の見出しと条番号は「条」を指す。項番号・号番号はそれぞれの単位。
+    const host = num.classList.contains('article-title') || num.classList.contains('article-caption')
+      ? num.closest('.article')
+      : num.closest('[data-anchor]');
+    if (!host || !host.dataset.anchor) return;
+    selectAnchor(host.dataset.anchor, true, pane);
   });
 
   pane.el.addEventListener('auxclick', e => {
@@ -3328,6 +3436,7 @@ function wireGlobal() {
   $('#scrim').onclick = () => setDrawer(false);
 
   $('#btn-check').onclick = () => checkAmendments(true);
+  $('#topbar-law').onclick = () => { if (P().current) openRevisions(P().current.lawId); };
   $('#jump-input').addEventListener('input', updateJumpPreview);
   $('#btn-lookup-fab').onclick = () => setSheet($('#lookup-sheet').hidden);
   $('#lookup-sheet-close').onclick = () => setSheet(false);

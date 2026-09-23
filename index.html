@@ -170,6 +170,7 @@
   <main id="panes" class="pane pane-main">
     <section class="lawpane active" data-pane="0">
       <div class="law-header" hidden>
+        <div class="law-warn" hidden></div>
         <div class="law-title"></div>
         <div class="law-meta"></div>
         <div class="crumb" hidden></div>
@@ -187,6 +188,7 @@
 
     <section class="lawpane" data-pane="1" hidden>
       <div class="law-header" hidden>
+        <div class="law-warn" hidden></div>
         <div class="law-title"></div>
         <div class="law-meta"></div>
         <div class="crumb" hidden></div>
@@ -272,6 +274,18 @@
 
     <div id="export-law" style="margin-top:18px"></div>
 
+    <menu class="dlg-actions"><button value="close">閉じる</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-revisions">
+  <form method="dialog" class="dlg-form">
+    <h2>版を選ぶ　<span id="rev-law" class="count"></span></h2>
+    <p class="hint" style="margin:0 0 10px">
+      e-Gov が持っている版の一覧です。まだ施行されていない改正も含みます。
+      選ぶと別の法令として取り込むので、いま読んでいる版はそのまま残ります。
+    </p>
+    <div id="rev-list" class="rev-list"></div>
     <menu class="dlg-actions"><button value="close">閉じる</button></menu>
   </form>
 </dialog>

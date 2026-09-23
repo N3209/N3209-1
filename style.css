@@ -88,9 +88,71 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 }
 .amend-dot.upcoming { background: transparent; }
 .amend-dot[hidden] { display: none; }
+.amend-dot { cursor: pointer; }
+
+/*
+ * まだ施行されていない版を読んでいるときの帯。
+ * 目立たないと事故になる。いま効いていない条文を、効いていると思って読む
+ * のが一番まずい。だから本文の上に、消せない形で常に出す。
+ */
+/*
+ * 条・項・号の番号は、その単位にタグやメモを付けるための取っ手である。
+ * 本文のどこを触っても注釈欄が開くと、読んでいるだけで邪魔になる。
+ * 触れるものだと分かるよう、番号にだけ下線と余白を持たせる。
+ */
+.article-title, .article-caption, .para-num, .item-title {
+  cursor: pointer; border-radius: 4px;
+  text-decoration: underline; text-decoration-style: dotted;
+  text-underline-offset: 3px; text-decoration-color: var(--line);
+}
+.article-title:hover, .article-caption:hover,
+.para-num:hover, .item-title:hover {
+  background: var(--accent-bg); text-decoration-color: var(--accent);
+}
+
+.law-warn {
+  background: #b3261e; color: #fff;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; padding: 5px 10px; border-radius: 6px;
+  margin: 8px 0; display: inline-block;
+}
+.law-warn[hidden] { display: none; }
+
+/* 一覧の中の「未施行」札 */
+.law-list .rev-badge {
+  flex: none; font-family: var(--font-ui); font-size: 10px; font-weight: 700;
+  color: #b3261e; border: 1px solid #b3261e; border-radius: 4px;
+  padding: 0 3px; margin-left: 4px;
+}
+
+/* 版の一覧 */
+.rev-list { max-height: 56vh; overflow-y: auto; }
+.rev-list button {
+  display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  border-radius: 9px; padding: 9px 11px; margin-bottom: 6px; cursor: pointer; font: inherit;
+}
+.rev-list button:hover { background: var(--bg-hover); }
+.rev-list button[disabled] { cursor: default; opacity: .75; }
+.rev-list .rv-date { flex: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rev-list .rv-title { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rev-list .rv-state { flex: none; font-size: 11px; font-family: var(--font-ui); }
+.rev-list .rv-state.now { color: var(--accent); font-weight: 700; }
+.rev-list .rv-state.future { color: #b3261e; font-weight: 700; }
+.rev-list .rv-state.past { color: var(--fg-faint); }
+
+/*
+ * 二度続けて押すと画面が拡大してしまうのを止める。
+ * 押すためのものは、拡大の合図として受け取らない。
+ * 二本指での拡大は残す。本文を大きくして読みたいことはあるので、
+ * user-scalable=no のような潰し方はしない。
+ */
+button, .tabs button, .law-name, .article-title, .article-caption,
+.para-num, .item-title, .toc-list li, .law-list li, .mark-list li,
+.find-list li, .rev-list button, a.ref { touch-action: manipulation; }
 
 .icon-btn {
-  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
   border-radius: 8px; width: 34px; height: 34px; font-size: 15px;
   cursor: pointer; flex: none; line-height: 1;
 }
@@ -279,9 +341,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .bottombar .viewpad { top: auto; bottom: 46px; }
 
 /* 下から出るシート。条文を隠しきらないよう、下半分までに収める。
-   幅も全部は使わない。左に余白があると、後ろの条文が途切れずに見える。 */
+   幅は盤に合わせて詰める。盤だけ右に寄って左が空くより、まとまって見える。
+   後ろの条文も、そのぶん途切れずに残る。 */
 .sheet {
-  position: fixed; left: 20%; right: 0; bottom: 0; z-index: 35;
+  position: fixed; left: auto; right: 0; bottom: 0; z-index: 35;
+  width: min(94vw, 268px);
   display: flex; flex-direction: column; max-height: 62vh;
   background: var(--bg-elev); border-top: 1px solid var(--line);
   border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
@@ -331,15 +395,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .sheet-pane #btn-pad { display: none; }      /* 盤は常に出ているので切替は要らない */
 .sheet-pane .jump > .go { display: none; }   /* 「引く」は盤の中にある */
-/* 幅いっぱいに広げると横に平たい札になる。正方形に近い方が狙いやすい。
-   余った幅は左に回す。右手の親指で押すので、右に寄っている方が届く。 */
+/* シートの幅を盤に合わせてあるので、盤は素直に横いっぱいに広げる。
+   1列あたり約48px、高さ42px で、ほぼ正方形になる。 */
 .sheet-pane .keypad {
-  position: static; padding: 0; gap: 6px; margin-left: auto;
+  position: static; padding: 0; gap: 6px;
   border: none; box-shadow: none; background: none;
-  grid-template-columns: repeat(4, 46px);
+  grid-template-columns: repeat(4, 1fr);
 }
-.sheet-pane .keypad button { height: 42px; font-size: 17px; border-radius: 8px; }
-.sheet-pane .keypad .unit, .sheet-pane .keypad .go { font-size: 15px; }
+.sheet-pane .keypad button { height: 48px; font-size: 19px; border-radius: 9px; }
+.sheet-pane .keypad .unit, .sheet-pane .keypad .go { font-size: 16px; }
 
 /* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
 .sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
