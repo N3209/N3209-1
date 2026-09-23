@@ -18,6 +18,8 @@
 <header class="topbar">
   <button id="btn-menu" class="icon-btn" aria-label="法令と目次">☰</button>
   <h1 class="brand">六法</h1>
+  <!-- 狭い画面では、上段は ☰ と法令名だけにする -->
+  <span id="topbar-law" class="topbar-law"></span>
 
   <div class="nav">
     <button id="btn-back" class="icon-btn" aria-label="戻る" title="戻る (Alt+←)" disabled>←</button>
@@ -30,17 +32,17 @@
     <button id="btn-pad" class="icon-btn" aria-label="テンキー" title="テンキー">⌗</button>
     <button id="jump-go" class="go">引く</button>
 
-    <!-- 条文番号を打つための盤。項・号は打てない。条まで引ければ十分で、
+    <!-- 条文番号を打つための盤。数字と「の」だけ。
+         「110の2」と打てれば足りるので「条」も要らない。項・号も打てない。
          キーを増やすほど一つ一つが小さくなり、押し間違いが増える。 -->
     <div id="keypad" class="keypad" hidden>
       <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
-      <button data-k="条" class="unit">条</button>
+      <button data-k="⌫" class="del">⌫</button>
       <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
       <button data-k="の" class="unit">の</button>
       <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button data-k="⌫" class="del">⌫</button>
-      <button data-k="0" class="zero">0</button>
       <button data-k="✓" class="go">引く</button>
+      <button data-k="0" class="zero">0</button>
     </div>
   </div>
 
@@ -192,8 +194,12 @@
 
 </div>
 
-<!-- 狭い画面の「引く」。一番よく使う操作なので、右下の親指の位置に置く。 -->
-<button id="btn-lookup-fab" class="fab" aria-label="引く" title="引く">引く</button>
+<!-- 狭い画面の下段。手の届くところに、よく使うものだけを置く。
+     .nav（戻る・進む）と .view（表示設定）は placeControls がここへ移してくる。 -->
+<div id="bottombar" class="bottombar" hidden>
+  <span class="bb-gap"></span>
+  <button id="btn-lookup-fab" class="lookup" aria-label="引く" title="引く">引く</button>
+</div>
 
 <div id="lookup-sheet" class="sheet" hidden role="dialog" aria-label="引く">
   <div class="sheet-head">

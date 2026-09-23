@@ -59,6 +59,14 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   margin: 0 6px 0 2px; font-family: var(--font-body); white-space: nowrap;
 }
 
+/* 狭い画面では、上段に ☰ と並べて法令名を出す。
+   条文の上に見出しの塊を置くより、ここに一行あるほうが本文が広く取れる。 */
+.topbar-law {
+  display: none; flex: 1; min-width: 0;
+  font-family: var(--font-body); font-size: 16px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .icon-btn {
   border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
   border-radius: 8px; width: 34px; height: 34px; font-size: 15px;
@@ -141,8 +149,12 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .keypad button:hover { background: var(--bg-hover); }
 .keypad button:active { background: var(--accent-bg); }
 .keypad .unit { font-family: var(--font-body); font-size: 15px; color: var(--accent); }
-.keypad .go { grid-column: span 2; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; font-size: 15px; }
-.keypad .zero { grid-column: span 2; }
+.keypad .go {
+  grid-row: span 2;            /* 縦2段。押しやすく、段数も増えない */
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 600; font-size: 15px;
+}
+.keypad .zero { grid-column: span 3; }
 .keypad .del { color: var(--fg-dim); }
 
 /* ---------------------------------------------------------------- layout */
@@ -214,17 +226,26 @@ body.resizing { cursor: col-resize; user-select: none; }
 .scrim { position: fixed; inset: 0; z-index: 29; background: rgba(17, 20, 24, .32); }
 .scrim[hidden] { display: none; }
 
-/* 右下の「引く」。一番よく使う操作を親指の位置に置く。
-   広い画面では上段に欄があるので出さない。 */
-.fab {
-  display: none; position: fixed; z-index: 34;
-  right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
-  width: 56px; height: 56px; border-radius: 28px;
-  font: inherit; font-family: var(--font-body); font-size: 15px; font-weight: 700; line-height: 1;
-  border: none; background: var(--accent); color: #fff;
-  box-shadow: var(--shadow); cursor: pointer;
+/* 狭い画面の下段。戻る・進む・表示設定・引く。
+   どれも片手で押すものなので、上段ではなくここに置く。 */
+.bottombar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 33;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  padding-bottom: calc(7px + env(safe-area-inset-bottom));
+  background: var(--bg); border-top: 1px solid var(--line);
 }
-.fab.on { filter: brightness(.92); }
+.bottombar[hidden] { display: none; }
+.bb-gap { flex: 1; }
+.bottombar .lookup {
+  flex: none; height: 38px; padding: 0 20px; border-radius: 19px;
+  border: none; background: var(--accent); color: #fff;
+  font: inherit; font-family: var(--font-body); font-size: 15px; font-weight: 700;
+  cursor: pointer;
+}
+.bottombar .lookup.on { filter: brightness(.92); }
+/* 表示設定の札は、下段から出すので上へ開く */
+.bottombar .viewpad { top: auto; bottom: 46px; }
 
 /* 下から出るシート。条文を隠しきらないよう、下半分までに収める。
    幅も全部は使わない。左に余白があると、後ろの条文が途切れずに見える。 */
@@ -782,12 +803,19 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   #btn-menu { display: block; }
   .tab-close { display: block; }
 
-  /* 上段に全部は並ばない。番号の欄も検索の欄も、右下から出すシートへ移す
-     （placeLookup が DOM ごと動かす）。消すと引く手立てが無くなる。 */
-  #btn-lookup-fab { display: block; }
+  /* 上段は ☰ と法令名だけにする。番号の欄・検索の欄・戻る進む・表示設定は
+     すべて下へ移す（placeControls が DOM ごと動かす）。
+     片手で持つと上段は遠い。よく使うものほど下に置く。 */
+  .brand { display: none; }
+  .topbar-law { display: block; }
+
+  /* 法令名は上段に出したので、本文の上は「いまどこを読んでいるか」だけ。
+     見出しが無いときは高さを持たない。 */
+  .law-header { padding: 0 16px; border-bottom: none; }
+  .law-title, .law-meta { display: none; }
+  .crumb { margin-top: 0; padding: 7px 0; border-bottom: 1px solid var(--line); }
 
   .content { padding: 16px 16px 45vh; }
-  .law-header { padding: 12px 16px 8px; }
   .has-memo::after { left: -10px; }
 }
 

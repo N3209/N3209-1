@@ -1044,14 +1044,14 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   state.selected = null;                 // 前の法令の選択を持ち越さない
 
   pane.title.textContent = rec.lawTitle;
+  // 分類と条文の件数は読むのに要らない。名前と、いつの版かだけ残す。
   pane.meta.textContent = [
     rec.lawNum,
-    rec.category ? '分類: ' + rec.category : '',
     rec.enforcementDate ? '施行: ' + rec.enforcementDate : '',
-    '条文 ' + index.filter(e => e.anchor.split('/').length === 2).length + '件',
   ].filter(Boolean).join('　/　');
   pane.header.hidden = false;
   pane.el.innerHTML = html;
+  syncTopbarLaw();
   indexAnchorEls(pane);
 
   renderLawList();
@@ -1235,10 +1235,18 @@ async function followRef(a, toOtherPane) {
 
 /* ----------------------------------------------------------- 2面の操作 */
 
+/* 狭い画面では上段に ☰ と法令名を並べる。面を切り替えたら name も入れ替える。 */
+function syncTopbarLaw() {
+  const el = $('#topbar-law');
+  if (!el) return;
+  el.textContent = (P().current && P().current.lawTitle) || '';
+}
+
 function setActivePane(idx) {
   if (!state.split) idx = 0;
   state.active = idx;
   for (const p of state.panes) p.root.classList.toggle('active', p.idx === idx);
+  syncTopbarLaw();
   renderLawList();
   renderToc();
   // 「この法令」の指す先が変わるので、結果を出し直す。
@@ -1409,14 +1417,28 @@ function setSheet(open, which) {
 }
 
 /*
- * 狭い画面には上段に欄を並べる余地がない。右下のボタンから下に出るシートへ、
- * 番号の欄と検索の欄を「移す」。作りを二重に持たない。同じ入力欄が2つあると、
- * どちらに打ったかで結果が変わる。
+ * 狭い画面には上段に全部を並べる余地がない。片手で持つと上段は遠いので、
+ * よく使うものを下へ移す。
+ *
+ *   上段   ☰ と法令名だけ
+ *   下段   戻る・進む／表示設定／引く
+ *   シート 番号の欄（テンキー）と検索の欄
+ *
+ * 作りを二重に持たない。同じ入力欄やボタンが2つあると、どちらを押したかで
+ * 挙動が変わる。要素そのものを動かす。
  */
-function placeLookup() {
+function placeControls() {
   const jump = $('.jump'), find = $('.find'), panel = $('#panel-find');
+  const nav = $('.nav'), view = $('.view'), bar = $('#bottombar');
   const pad = $('#keypad'), input = $('#jump-input');
+
+  bar.hidden = !narrow();
+
   if (narrow()) {
+    if (nav.parentElement !== bar) {
+      bar.prepend(nav);                       // 左端に戻る・進む
+      bar.insertBefore(view, $('#btn-lookup-fab'));   // 右端の「引く」の手前
+    }
     if (jump.parentElement !== $('#sheet-jump')) {
       $('#sheet-jump').append(jump);
       $('#sheet-find').append(panel, find);
@@ -1431,6 +1453,8 @@ function placeLookup() {
       // 上段の並びは ← → / 番号 / 検索 / 2面 / 表示 の順に戻す
       $('.topbar').insertBefore(jump, $('#btn-split'));
       $('.topbar').insertBefore(find, $('#btn-split'));
+      $('.topbar').insertBefore(nav, jump);
+      $('.topbar').appendChild(view);
       $('#pane-laws').insertBefore(panel, $('#panel-marks'));
     }
     input.inputMode = 'numeric';
@@ -3168,7 +3192,7 @@ function wireGlobal() {
   for (const b of $$('#sheet-tabs button')) {
     b.onclick = () => setSheet(true, b.dataset.sheet);
   }
-  if (narrowMQ && narrowMQ.addEventListener) narrowMQ.addEventListener('change', placeLookup);
+  if (narrowMQ && narrowMQ.addEventListener) narrowMQ.addEventListener('change', placeControls);
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
@@ -3282,7 +3306,7 @@ function registerServiceWorker() {
   let sheetTab = 'jump';
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
-  placeLookup();
+  placeControls();
   await loadNotes();
   await loadRanges();
   await refreshLawList();
