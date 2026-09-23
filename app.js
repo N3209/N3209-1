@@ -1025,6 +1025,7 @@ function renderLawList() {
     li.className = P().current && P().current.lawId === l.lawId ? 'active' : '';
     const a = amendOf(l);
     li.innerHTML = `<span class="law-name" title="${esc(l.lawTitle)}">${esc(l.lawTitle)}</span>`
+      + (l.source === 'file' ? '<span class="src-badge">取り込み</span>' : '')
       + (isUnenforced(l) ? '<span class="rev-badge">未施行</span>' : '')
       + (a ? `<span class="amend-dot ${a.kind === 'upcoming' ? 'upcoming' : ''}" title="${esc(amendTitle(a))}　押すと版を選べます"></span>` : '')
       + `<button class="del" title="削除">×</button>`;
@@ -1073,10 +1074,12 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
 
   pane.title.textContent = rec.lawTitle;
   // 分類と条文の件数は読むのに要らない。名前と、いつの版かだけ残す。
-  pane.meta.textContent = [
-    rec.lawNum,
-    rec.enforcementDate ? '施行: ' + rec.enforcementDate : '',
-  ].filter(Boolean).join('　/　');
+  pane.meta.textContent = rec.source === 'file'
+    ? '取り込んだデータ　施行日は不明'
+    : [
+      rec.lawNum,
+      rec.enforcementDate ? '施行: ' + rec.enforcementDate : '',
+    ].filter(Boolean).join('　/　');
   const warn = $('.law-warn', pane.root);
   const unenforced = isUnenforced(rec);
   warn.hidden = !unenforced;
@@ -1084,6 +1087,20 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
     ? '未施行　' + rec.enforcementDate + ' 施行予定'
       + (rec.amendLawTitle ? '（' + rec.amendLawTitle + '）' : '')
     : '';
+
+  const note = $('.law-note', pane.root);
+  if (rec.source === 'file') {
+    note.hidden = false;
+    note.innerHTML = '<span>取り込んだデータ　'
+      + esc(rec.importedAt || '') + ' 取り込み　施行日は不明</span>'
+      + ((rec.dupAnchors && rec.dupAnchors.length)
+        ? '<span class="warn">同じ位置を指す条項が ' + rec.dupAnchors.length
+          + '件あります（' + esc(rec.dupAnchors.join('、')) + '）。ここに付けた注釈は、どちらを指すか決まりません</span>'
+        : '');
+  } else {
+    note.hidden = true;
+    note.innerHTML = '';
+  }
 
   pane.header.hidden = false;
   pane.el.innerHTML = html;
@@ -1309,7 +1326,9 @@ function syncTopbarLaw() {
   if (!el) return;
   const rec = P().current;
   $('.tl-name', el).textContent = (rec && rec.lawTitle) || '';
-  $('.tl-date', el).textContent = (rec && rec.enforcementDate) ? '施行 ' + rec.enforcementDate : '';
+  $('.tl-date', el).textContent = !rec ? ''
+    : rec.source === 'file' ? '施行日不明'
+    : rec.enforcementDate ? '施行 ' + rec.enforcementDate : '';
 
   const dot = $('.tl-dot', el);
   const a = rec && amendOf(rec);
@@ -2052,6 +2071,104 @@ function updateInlineMemo(anchor, text, pane) {
   div.textContent = text;
 }
 
+/* ---------------------------------------------- ファイルから取り込む */
+
+/*
+ * e-Gov に無い法令を、法令標準XMLのファイルから取り込む。
+ *
+ * 最高裁判所規則（民事訴訟規則・刑事訴訟規則など）と議院規則は、e-Gov に
+ * 1件も入っていない。内閣が公布するものではないためと思われるが、e-Gov 自身の
+ * 法令種別の説明にはこれらのコードがあるので、理由は確かめられていない。
+ *
+ * 取り込んだものは e-Gov 由来と同じようには扱わない。いつの版なのか、
+ * 公布済みの改正がどこまで入っているのかが、こちらからは分からないからである。
+ *   ・一覧と本文に「取り込み」の印を出す
+ *   ・改正の確認（e-Gov への問い合わせ）の対象から外す
+ *   ・施行日は空にせず「不明」と出す。空欄は「無い」のか「分からない」のか
+ *     区別が付かない
+ */
+
+const LOCAL_PREFIX = 'LOCAL_';
+
+/*
+ * 市販アプリの書き出しには、注釈付きだと妥当な XML にならないものがある。
+ * 既知の壊れ方は2つで、どちらも直せば標準のパーサで読める。
+ *   ・XML 宣言が `?>` ではなく `>` で終わる
+ *   ・notes 属性が単引用で始まり二重引用で閉じる
+ */
+function repairExportXml(text) {
+  let t = String(text).replace(/^\uFEFF/, '');
+  t = t.replace(/^<\?xml([^>]*?)\??>/, '<?xml$1?>');
+  t = t.replace(/notes='([^'"]*)"/g, 'notes="$1"');
+  return t;
+}
+
+/** アプリ独自の注釈要素を外す。条文だけを残す。 */
+function stripAppElements(doc) {
+  let n = 0;
+  for (const tag of ['Highlight', 'HighlightEnd', 'Bookmark', 'BookmarkNotes']) {
+    for (const el of [...doc.getElementsByTagName(tag)]) { el.remove(); n++; }
+  }
+  return n;
+}
+
+async function importLawFile(file) {
+  const raw = await file.text();
+  let doc;
+  try {
+    doc = parseXML(repairExportXml(raw));
+  } catch (e) {
+    throw new Error('XML として読めません（法令標準XMLのファイルを選んでください）');
+  }
+
+  const lawEl = doc.querySelector('Law');
+  if (!lawEl) throw new Error('Law 要素がありません');
+  const stripped = stripAppElements(doc);
+
+  const titleEl = lawEl.querySelector('LawTitle');
+  const lawTitle = titleEl ? titleEl.textContent.trim() : '';
+  if (!lawTitle) throw new Error('法令名（LawTitle）がありません');
+
+  // 描いてみて、中身を確かめてから取り込む。読めないものを抱え込まない。
+  const { index } = renderLaw(lawEl);
+  if (!index.length) throw new Error('条文が1件も読み取れません');
+
+  /*
+   * 同じアンカーを指す場所が複数ないか調べる。
+   *
+   * 注釈の位置はアンカーで持つので、重なっていると「どちらに付けたのか」が
+   * 決まらない。黙って取り込むと、あとで別の条に付いているように見える。
+   *
+   * 元データを直して重なりを解くことはしない。たとえば民事訴訟規則の附則には、
+   * 見出し（（施行期日）など）が独立した項として入っていて、本物の項と番号が
+   * 重なっている。これを推測で畳むのは、法令を正確に表すという原則を一番
+   * 危うくする。見つけたことを知らせるだけにする。
+   */
+  const seen = new Map();
+  for (const e of index) seen.set(e.anchor, (seen.get(e.anchor) || 0) + 1);
+  const dup = [...seen].filter(([, n]) => n > 1).map(([a]) => a);
+
+  const rec = {
+    lawId: LOCAL_PREFIX + lawTitle,
+    lawTitle,
+    lawNum: '',                    // 書き出しに入っている値はアプリ内部のIDで、法令番号ではない
+    source: 'file',
+    importedAt: today(),
+    dupAnchors: dup,
+    xml: new XMLSerializer().serializeToString(doc),
+    savedAt: Date.now(),
+  };
+  await store.putLaw(rec);
+  await refreshLawList();
+  await navigate(rec.lawId);
+
+  const parts = ['「' + lawTitle + '」を取り込みました'];
+  if (stripped) parts.push('注釈の印 ' + stripped + '件は外しました');
+  if (dup.length) parts.push('同じ位置を指す条項が ' + dup.length + '件あります');
+  toast(parts.join('　/　'));
+  return rec;
+}
+
 /* -------------------------------------------------------------- 改正の追従 */
 
 /*
@@ -2128,7 +2245,8 @@ async function checkAmendment(law) {
 async function checkAmendments(loud) {
   // 固定版（`<法令ID>@<版ID>`）は e-Gov の法令IDではないので問い合わせない。
   // その版はその版として固定したものなので、新しい版を知らせる意味もない。
-  const targets = state.laws.filter(l => !l.revisionOf);
+  // 取り込んだものは e-Gov に無いので、問い合わせても答えが返らない
+  const targets = state.laws.filter(l => !l.revisionOf && l.source !== 'file');
   if (!targets.length) { if (loud) toast('取り込んだ法令がありません'); return; }
   let behind = 0, upcoming = 0, failed = 0;
 
@@ -2190,7 +2308,7 @@ function isUnenforced(rec) {
  */
 function amendOf(law) {
   const rec = typeof law === 'string' ? state.laws.find(l => l.lawId === law) : law;
-  if (!rec || rec.revisionOf) return null;          // 固定版には印を出さない
+  if (!rec || rec.revisionOf || rec.source === 'file') return null;   // 固定版・取り込みには出さない
   const a = amendState[rec.lawId];
   if (!a || !a.kind || a.kind === 'none') return null;
   if ((a.rev || '') !== (rec.lawRevisionId || '')) return null;   // 確かめた版と違う
@@ -3654,6 +3772,19 @@ function wire() {
     if (!f) return;
     if (!confirm('バックアップから復元します。\n同じ条文の注釈は、新しい方を残します。よろしいですか？')) return;
     try { await importBackup(f); } catch (err) { toast('復元できませんでした: ' + err.message); }
+  };
+
+  $('#btn-import-law').onclick = () => $('#import-file').click();
+  $('#import-file').onchange = async e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';                       // 同じファイルを選び直せるように
+    if (!f) return;
+    try {
+      await importLawFile(f);
+      $('#dlg-add').close();
+    } catch (err) {
+      toast('取り込めませんでした: ' + err.message);
+    }
   };
 
   const addSearchBtn = $('#add-search');
