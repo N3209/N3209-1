@@ -1582,10 +1582,16 @@ function updateCrumb(pane) {
 
   const art = lastAtOrBefore(pane.articleOffsets, y);
   const parts = chain.map((e, i) =>
-    `<span class="${i === chain.length - 1 ? 'here' : ''}">${esc(e.title)}</span>`);
-  if (art) parts.push(`<span class="here">${esc(anchorLabel(art.anchor))}</span>`);
+    `<span class="${i === chain.length - 1 && !art ? 'here' : ''}">${esc(e.title)}</span>`);
 
-  crumb.innerHTML = parts.join('<span class="sep">›</span>');
+  /*
+   * 編・章・節の道筋と、いまの条を分けて包む。
+   * 狭い画面では二段にして、条を必ず下の段に出す。まとめて一行にすると、
+   * あふれたときに右端＝いまの条が切れる。一番知りたいものが消える。
+   */
+
+  crumb.innerHTML = `<span class="crumb-path">${parts.join('<span class="sep">›</span>')}</span>`
+    + (art ? `<span class="crumb-art here">${esc(anchorLabel(art.anchor))}</span>` : '');
   crumb.hidden = false;
 
   // 目次の現在位置は、操作している面にだけ追随させる
