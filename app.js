@@ -1039,6 +1039,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   pane.current = rec;
   pane.index = index;
   pane.toc = toc;
+  buildJumpTables(pane, index);
   state.indexCache.set(lawId, index);
   state.selected = null;                 // 前の法令の選択を持ち越さない
 
@@ -1051,6 +1052,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   ].filter(Boolean).join('　/　');
   pane.header.hidden = false;
   pane.el.innerHTML = html;
+  indexAnchorEls(pane);
 
   renderLawList();
   renderToc();
@@ -1435,6 +1437,7 @@ function placeLookup() {
     try { pad.hidden = localStorage.getItem('roppo.pad') !== '1'; } catch (e) { pad.hidden = true; }
     $('#tab-find').hidden = false;
     setSheet(false);
+    setDrawer(false);       // 覆いが残ると、広い画面では画面全体を塞ぐ
     const on = $('.tabs button[data-tab].on');
     switchTab(on ? on.dataset.tab : 'laws');
   }
@@ -2304,8 +2307,52 @@ function parseJump(input) {
   };
 }
 
+/*
+ * アンカーから要素を引く。描画のときに作った対応表を先に見る。
+ * 属性セレクタは要素を端から見ていくので、会社法のように6,000件あると
+ * 一回引くだけで数十ミリ秒かかる。下見は打つたびに引くので、そこが響く。
+ * 表が古くなっている場合（差し替えられた要素）は、従来どおり探し直す。
+ */
 function findAnchorEl(anchor, pane) {
-  return $(`[data-anchor="${CSS.escape(anchor)}"]`, (pane || P()).el);
+  const pn = pane || P();
+  const hit = pn.elOf && pn.elOf.get(anchor);
+  if (hit && hit.isConnected) return hit;
+  return $(`[data-anchor="${CSS.escape(anchor)}"]`, pn.el);
+}
+
+function indexAnchorEls(pane) {
+  pane.elOf = new Map();
+  for (const el of pane.el.querySelectorAll('[data-anchor]')) {
+    if (!pane.elOf.has(el.dataset.anchor)) pane.elOf.set(el.dataset.anchor, el);
+  }
+}
+
+/*
+ * 番号から行き先を探すための表を、描画のときに一度だけ作る。
+ *
+ * 作る前は、打つたびに scope の数だけ DOM を引き、さらに索引を端から端まで
+ * 走査していた。会社法は索引が6,000件あり scope も30を超えるので、下見を
+ * 出すたびにそれが繰り返される。外れの番号ほど重くなり、打っている手が止まる。
+ */
+function buildJumpTables(pane, index) {
+  pane.anchors = new Set();
+  pane.itemOfArt = new Map();     // 「scope/条/号」→ その号のアンカー
+  pane.rangedOf = new Map();      // scope → 削除条の範囲アンカー（170:174 の形）
+
+  for (const e of index) {
+    const a = e.anchor.split('/');
+    pane.anchors.add(e.anchor);
+    if (a.length === 4) {
+      const key = a[0] + '/' + a[1] + '/' + a[3];
+      if (!pane.itemOfArt.has(key)) pane.itemOfArt.set(key, e.anchor);   // 先に出てくる項を優先
+    }
+    if (a.length === 2 && a[1].includes(':')) {
+      if (!pane.rangedOf.has(a[0])) pane.rangedOf.set(a[0], []);
+      pane.rangedOf.get(a[0]).push(e.anchor);
+    }
+  }
+  // 本則を先に、次に附則・別表を現れた順で
+  pane.scopes = ['M', ...new Set(index.map(e => e.anchor.split('/')[0]).filter(s => s !== 'M'))];
 }
 
 async function doJump() {
@@ -2326,6 +2373,7 @@ async function doJump() {
   if (!r) { toast(`${numLabel(p.art, '条')}は見つかりません`); return; }
   if (r.note) toast(r.note);
 
+  closeDrawerAfterJump();   // 同じ法令の中で引くときは navigate を通らない
   rememberPos();
   if (scrollToAnchor(r.anchor, false)) {
     pushHist({ lawId: P().current.lawId, anchor: r.anchor, scrollTop: 0 });
@@ -2337,45 +2385,46 @@ async function doJump() {
  * 引くときと、打ちかけの下見（updateJumpPreview）の両方がここを通る。
  * 二つに分けて書くと、下見と実際の行き先がずれる。
  */
-function resolveJump(p) {
-  // 本則を先に、見つからなければ附則も探す
-  const scopes = ['M', ...new Set(P().index.map(e => e.anchor.split('/')[0]).filter(s => s !== 'M'))];
+function resolveJump(p, pane) {
+  const pn = pane || P();
+  if (!pn.anchors) return null;               // まだ描画していない
+  const has = a => pn.anchors.has(a);
 
-  for (const sc of scopes) {
+  for (const sc of pn.scopes) {
     // 項と号の両方が指定されている
-    if (p.par && p.item && findAnchorEl(`${sc}/${p.art}/${p.par}/${p.item}`)) {
-      return { anchor: `${sc}/${p.art}/${p.par}/${p.item}` };
-    }
-    // 項を省いた号指定（例: 709条3号）。条の下から号を探す。
+    const full = `${sc}/${p.art}/${p.par}/${p.item}`;
+    if (p.par && p.item && has(full)) return { anchor: full };
+
+    // 項を省いた号指定（例: 709条3号）
     if (!p.par && p.item) {
-      const hit = P().index.find(e => {
-        const a = e.anchor.split('/');
-        return a.length === 4 && a[0] === sc && a[1] === p.art && a[3] === p.item;
-      });
-      if (hit) return { anchor: hit.anchor };
+      const hit = pn.itemOfArt.get(`${sc}/${p.art}/${p.item}`);
+      if (hit) return { anchor: hit };
     }
-    if (p.par && findAnchorEl(`${sc}/${p.art}/${p.par}`)) {
+
+    const par = `${sc}/${p.art}/${p.par}`;
+    if (p.par && has(par)) {
       return {
-        anchor: `${sc}/${p.art}/${p.par}`,
+        anchor: par,
         note: p.item ? `第${p.item}号は見つからないため、項までで止めました` : '',
       };
     }
-    if (findAnchorEl(`${sc}/${p.art}`)) {
+
+    const art = `${sc}/${p.art}`;
+    if (has(art)) {
       return {
-        anchor: `${sc}/${p.art}`,
+        anchor: art,
         note: (p.par || p.item) ? '指定の項・号は見つからないため、条までで止めました' : '',
       };
     }
+
     // 削除された条は "170:174" のような範囲でまとめられている
-    const ranged = P().index.find(e => {
-      const a = e.anchor.split('/');
-      return a.length === 2 && a[0] === sc && numInRange(a[1], p.art);
-    });
-    if (ranged) {
-      return {
-        anchor: ranged.anchor,
-        note: `${numLabel(p.art, '条')}は${numLabel(ranged.anchor.split('/')[1], '条')}にまとめられています`,
-      };
+    for (const a of (pn.rangedOf.get(sc) || [])) {
+      if (numInRange(a.split('/')[1], p.art)) {
+        return {
+          anchor: a,
+          note: `${numLabel(p.art, '条')}は${numLabel(a.split('/')[1], '条')}にまとめられています`,
+        };
+      }
     }
   }
   return null;
@@ -2506,7 +2555,7 @@ async function doFind() {
   find.at = -1;
   find.scopeLawId = find.where === 'law' && P().current ? P().current.lawId : null;
 
-  switchTab('find');
+  if (!narrow()) switchTab('find');   // 狭い画面では結果はシートの中。左ペインは触らない
   renderFindList();
   paintFindHits();
 }
@@ -3160,6 +3209,22 @@ function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') return;
 
+  let approved = false;                       // このタブが切り替えを承認したか
+
+  // 別のタブが先に切り替えたときの知らせ。押したときだけ読み込み直す。
+  const offerReload = () => {
+    const el = $('#toast');
+    el.innerHTML = '';
+    el.append('新しい版に入れ替わりました　');
+    const b = document.createElement('button');
+    b.className = 'mini';
+    b.textContent = '読み込み直す';
+    b.onclick = async () => { await flushSave(); reloading = true; location.reload(); };
+    el.appendChild(b);
+    el.hidden = false;
+    clearTimeout(toastTimer);
+  };
+
   navigator.serviceWorker.register('sw.js').then(reg => {
     const offer = worker => {
       if (!worker) return;
@@ -3171,6 +3236,7 @@ function registerServiceWorker() {
       b.textContent = '読み込み直す';
       b.onclick = async () => {
         await flushSave();                    // 書きかけを保存してから
+        approved = true;                      // このタブは読み込み直してよい
         worker.postMessage('skip-waiting');
       };
       el.appendChild(b);
@@ -3189,9 +3255,18 @@ function registerServiceWorker() {
     });
   }).catch(err => console.warn('Service Worker を登録できませんでした', err));
 
+  // 読み込み直すのは、このタブで「読み込み直す」を押したときだけ。
+  // controllerchange は初回の導入（clients.claim）でも飛ぶし、別のタブが
+  // 承認したときにも飛ぶ。そこで読み込み直すと、こちらの書きかけが消える。
   let reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloading) return;
+    if (!approved) {
+      // 別のタブが切り替えた。こちらは古い殻のまま動いている。
+      // 勝手に読み込み直すと書きかけが消えるので、知らせるだけにする。
+      if (navigator.serviceWorker.controller) offerReload();
+      return;
+    }
     reloading = true;
     location.reload();
   });

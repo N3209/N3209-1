@@ -9,24 +9,35 @@
  * e-Gov API への通信には一切触らない。キャッシュすると、取り込んだつもりで
  * 古い条文が返る事故が起きる。法令の鮮度はアプリ側が責任を持つ。
  *
- * 更新の罠について。Service Worker は「キャッシュから返す」のが仕事なので、
- * 何もしないとアプリを直しても古いままになる。そこで
- *   ・キャッシュ名に版を持たせ、有効化のときに古い版を捨てる
- *   ・新しい版が待機に入ったらページへ知らせ、利用者が選んで切り替える
- * という形にしてある。勝手に切り替えると、書きかけのメモを抱えたまま
- * 読み込み直すことになるため、断りなしには行わない。
+ * 殻は版ごと丸ごと入れ替える。これが一番大事な決めごとである。
+ *
+ *   ・版ごとに別のキャッシュを作り、そこから「だけ」返す
+ *   ・有効な版のキャッシュを裏で書き換えない
+ *   ・必須のファイルが1つでも取れなければ、その版は入れない
+ *
+ * 裏で書き換えると、新しい index.html と古い app.js のような組み合わせが
+ * できる。HTML の構造と JS の期待がずれると、起動そのものが壊れる。
+ * 必須ファイルの取りこぼしを許すと、中途半端な版が有効になり、
+ * activate が動いていた古い版を消してしまう。オフラインで開けなくなる。
+ *
+ * 切り替えの合図はページから来る。勝手に切り替えると、書きかけのメモを
+ * 抱えたまま読み込み直すことになるため、断りなしには行わない。
  */
 
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = 'roppo-shell-' + VERSION;
 
-// 殻を構成するファイル。法令データは含めない。
-const SHELL = [
+// 欠けると起動しないもの。全部そろって初めてこの版を入れる。
+const REQUIRED = [
   './',
   './index.html',
   './app.js',
   './style.css',
   './manifest.webmanifest',
+];
+
+// 無くても読める。取れなくてもこの版は入れる。
+const OPTIONAL = [
   './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -37,9 +48,16 @@ const SHELL = [
 self.addEventListener('install', e => {
   e.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // 1つでも失敗すると全部入らない addAll は使わない。
-    // 取りこぼしがあっても、残りはキャッシュできた方がよい。
-    await Promise.all(SHELL.map(async url => {
+
+    // 1つでも欠けたらここで例外を投げる。install が失敗すればこの版は
+    // 有効にならず、いま動いている版がそのまま残る。
+    await Promise.all(REQUIRED.map(async url => {
+      const res = await fetch(url, { cache: 'reload' });
+      if (!res.ok) throw new Error('必須ファイルを取得できません: ' + url + ' (' + res.status + ')');
+      await cache.put(url, res);
+    }));
+
+    await Promise.all(OPTIONAL.map(async url => {
       try {
         const res = await fetch(url, { cache: 'reload' });
         if (res.ok) await cache.put(url, res);
@@ -71,28 +89,32 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // e-Gov API には触らない
 
-  // 画面遷移。オフラインでも殻を返す。
-  if (req.mode === 'navigate') {
-    e.respondWith((async () => {
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+
+    // 画面遷移。この版の index.html を返す。
+    if (req.mode === 'navigate') {
+      const hit = (await cache.match('./index.html')) || (await cache.match('./'));
+      if (hit) return hit;
       try {
         return await fetch(req);
       } catch (err) {
-        const cache = await caches.open(CACHE);
-        return (await cache.match('./index.html')) || (await cache.match('./'))
-          || new Response('オフラインです', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        return new Response('オフラインです', {
+          status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
       }
-    })());
-    return;
-  }
+    }
 
-  // 殻のファイル。まずキャッシュを返し、裏で新しいものを取ってくる。
-  e.respondWith((async () => {
-    const cache = await caches.open(CACHE);
+    // 殻のファイル。この版のキャッシュからだけ返す。裏で取り直さない。
     const hit = await cache.match(req, { ignoreSearch: true });
-    const fresh = fetch(req).then(res => {
-      if (res && res.ok) cache.put(req, res.clone());
-      return res;
-    }).catch(() => null);
-    return hit || (await fresh) || new Response('', { status: 504 });
+    if (hit) return hit;
+
+    // この版に含まれていないもの（後から足したファイルなど）は素通しする。
+    // 有効な版のキャッシュには入れない。新旧が混ざるのを避けるためである。
+    try {
+      return await fetch(req);
+    } catch (err) {
+      return new Response('', { status: 504 });
+    }
   })());
 });
