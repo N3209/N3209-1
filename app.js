@@ -2185,12 +2185,12 @@ function renderNotePane() {
     <div class="note-quote">${esc(entry ? entry.text : '')}</div>
     <p class="note-label">マーク</p>
     <div class="palette" id="palette"></div>
-    <p class="note-label">前メモ　<span class="sub-note">本文の前に出ます</span></p>
+    <p class="note-label">前メモ</p>
     <input id="summary-input" type="text" placeholder="この条文を一言でいうと" autocomplete="off">
     <p class="note-label">文字タグ</p>
     <div class="note-tags" id="tag-chips"></div>
     <input id="tag-input" type="text" placeholder="タグを入力して Enter" autocomplete="off">
-    <p class="note-label">後メモ　<span class="sub-note">本文の後にぶら下がります</span></p>
+    <p class="note-label">後メモ</p>
     <textarea id="memo-input" placeholder="詳しく書き足したいこと"></textarea>
     <div class="saved-at" id="saved-at"></div>
   `;

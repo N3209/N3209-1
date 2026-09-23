@@ -793,7 +793,6 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
   padding: 8px 10px; margin-bottom: 14px; max-height: 7em; overflow-y: auto;
 }
 .note-label { font-size: 11px; letter-spacing: .08em; color: var(--fg-dim); margin: 0 0 6px; }
-.note-label .sub-note { letter-spacing: 0; color: var(--fg-faint); font-weight: normal; }
 
 .palette { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 18px; }
 .palette button {
