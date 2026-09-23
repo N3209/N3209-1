@@ -3393,13 +3393,28 @@ function bindPaneEvents(pane) {
      * 番号はその単位を指す取っ手なので、押す先としても分かりやすい。
      */
     const num = e.target.closest('.article-title, .article-caption, .para-num, .item-title');
-    if (!num) return;
+    if (num) {
+      /*
+       * 条番号は「条」を指す。ただし条番号は第1項の中に置かれているので、
+       * 近い方をたどると項になってしまう。条まで上がる。
+       * 見出し（.article-caption）は条にも項にも付くので、近い方でよい。
+       */
+      const host = num.classList.contains('article-title')
+        ? num.closest('.article')
+        : num.closest('[data-anchor]');
+      if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
+      return;
+    }
 
-    // 条の見出しと条番号は「条」を指す。項番号・号番号はそれぞれの単位。
-    const host = num.classList.contains('article-title') || num.classList.contains('article-caption')
-      ? num.closest('.article')
-      : num.closest('[data-anchor]');
+    /*
+     * 第1項は項番号を出さないのが慣例なので、取っ手が無い。
+     * 番号の無い項だけは、本文を押したときにその項を選ぶ。
+     * 番号のある項（②③…）は番号を押す。取っ手が二つあると迷う。
+     */
+    const host = e.target.closest('[data-anchor]');
     if (!host || !host.dataset.anchor) return;
+    if (!host.classList.contains('para')) return;
+    if (host.querySelector(':scope > .para-num')) return;
     selectAnchor(host.dataset.anchor, true, pane);
   });
 
