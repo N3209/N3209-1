@@ -2457,11 +2457,22 @@ function showSelBar() {
   const sel = window.getSelection();
   const rect = sel.getRangeAt(0).getBoundingClientRect();
   bar.hidden = false;
-  const w = bar.offsetWidth, pad = 12;
+  const w = bar.offsetWidth, h = bar.offsetHeight, pad = 12;
   bar.style.left = Math.min(Math.max(pad, rect.left + rect.width / 2 - w / 2),
     window.innerWidth - w - pad) + 'px';
-  const top = rect.top - bar.offsetHeight - 8;
-  bar.style.top = (top < pad ? rect.bottom + 8 : top) + 'px';
+
+  /*
+   * 選択の「下」に出す。
+   * iOS は選択すると「コピー・調べる」を選択の上に出してくるので、
+   * こちらも上に出すと重なって押せなくなる。下なら競合しない。
+   * 下に入らないときだけ上へ回す。
+   */
+  const barEl = $('#bottombar');
+  const floor = window.innerHeight - pad
+    - (barEl && !barEl.hidden ? barEl.offsetHeight : 0);
+  let top = rect.bottom + 10;
+  if (top + h > floor) top = rect.top - h - 10;
+  bar.style.top = Math.max(pad, top) + 'px';
   bar.dataset.pending = JSON.stringify({ anchor: info.anchor, text: info.text, nth: info.nth });
 }
 
