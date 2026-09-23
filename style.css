@@ -100,13 +100,12 @@ body { display: flex; flex-direction: column; overflow: hidden; }
  * 本文のどこを触っても注釈欄が開くと、読んでいるだけで邪魔になる。
  * 触れるものだと分かるよう、番号にだけ下線と余白を持たせる。
  */
-.article-title, .article-caption, .para-num, .item-title {
+.article-title, .para-num, .item-title {
   cursor: pointer; border-radius: 4px;
   text-decoration: underline; text-decoration-style: dotted;
   text-underline-offset: 3px; text-decoration-color: var(--line);
 }
-.article-title:hover, .article-caption:hover,
-.para-num:hover, .item-title:hover {
+.article-title:hover, .para-num:hover, .item-title:hover {
   background: var(--accent-bg); text-decoration-color: var(--accent);
 }
 

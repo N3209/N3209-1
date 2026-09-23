@@ -3440,13 +3440,13 @@ function bindPaneEvents(pane) {
      * 本文のどこを触っても開くと、読んでいるだけで欄が出てきて邪魔になる。
      * 番号はその単位を指す取っ手なので、押す先としても分かりやすい。
      */
-    const num = e.target.closest('.article-title, .article-caption, .para-num, .item-title');
+    /*
+     * 取っ手は「番号」だけにする。見出し（（損害賠償）など）は本文の一部で、
+     * 押すものには見えない。番号だけでも全部の単位に届く。
+     */
+    const num = e.target.closest('.article-title, .para-num, .item-title');
     if (num) {
-      /*
-       * 条番号は「条」を指す。ただし条番号は第1項の中に置かれているので、
-       * 近い方をたどると項になってしまう。条まで上がる。
-       * 見出し（.article-caption）は条にも項にも付くので、近い方でよい。
-       */
+      // 条番号は第1項の中に置かれているので、近い方をたどると項になる。条まで上がる。
       const host = num.classList.contains('article-title')
         ? num.closest('.article')
         : num.closest('[data-anchor]');
@@ -3464,7 +3464,8 @@ function bindPaneEvents(pane) {
      */
     const host = e.target.closest('[data-anchor]');
     if (!host || !host.dataset.anchor) return;
-    if (host.classList.contains('article')) return;                    // 条は条番号・見出しが取っ手
+    // 条は条番号が取っ手。ただし条番号を持たない条（稀にある）は本文で選べるようにする。
+    if (host.classList.contains('article') && host.querySelector('.article-title')) return;
     if (host.querySelector(':scope > .para-num, :scope > .item-title')) return;
     selectAnchor(host.dataset.anchor, true, pane);
   });
