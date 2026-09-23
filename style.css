@@ -71,7 +71,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 /* 施行日は落とさない。いつの版を読んでいるかは、読み違いに直結する。 */
-.topbar-law .tl-date { flex: none; font-size: 11px; color: var(--fg-dim); }
+.topbar-law .tl-date { flex: none; font-size: 13px; color: var(--fg-dim); }
 
 /*
  * 改正の印。
@@ -171,12 +171,21 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .keypad button:hover { background: var(--bg-hover); }
 .keypad button:active { background: var(--accent-bg); }
 .keypad .unit { font-family: var(--font-body); font-size: 15px; color: var(--accent); }
-.keypad .go {
-  grid-row: span 2;            /* 縦2段。押しやすく、段数も増えない */
+/*
+ * 数字は左上から 1〜9 が自動で埋まる。残り3つを置き場所で決める。
+ *
+ *   1 2 3 ⌫     ⌫ は上2段。打ち間違いを消すのは数字を打つ途中なので、
+ *   4 5 6 ⌫     手が数字の近くにあるうちに届く方がよい。
+ *   7 8 9 引    「引く」は下2段。打ち終わってから押すので下に置く。
+ *   の 0   引    「の」は左下（枝番）、0 は下の真ん中。
+ */
+.keypad .del  { grid-column: 4; grid-row: 1 / span 2; }
+.keypad .go   { grid-column: 4; grid-row: 3 / span 2;
   background: var(--accent); border-color: var(--accent); color: #fff;
   font-weight: 600; font-size: 15px;
 }
-.keypad .zero { grid-column: span 3; }
+.keypad .unit { grid-column: 1; grid-row: 4; }
+.keypad .zero { grid-column: 2; grid-row: 4; }
 .keypad .del { color: var(--fg-dim); }
 
 /* ---------------------------------------------------------------- layout */
@@ -322,13 +331,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .sheet-pane #btn-pad { display: none; }      /* 盤は常に出ているので切替は要らない */
 .sheet-pane .jump > .go { display: none; }   /* 「引く」は盤の中にある */
+/* 幅いっぱいに広げると横に平たい札になる。正方形に近い方が狙いやすい。
+   余った幅は左に回す。右手の親指で押すので、右に寄っている方が届く。 */
 .sheet-pane .keypad {
-  position: static; width: 100%; padding: 0; gap: 5px;
+  position: static; padding: 0; gap: 6px; margin-left: auto;
   border: none; box-shadow: none; background: none;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, 46px);
 }
-.sheet-pane .keypad button { height: 34px; font-size: 16px; border-radius: 7px; }
-.sheet-pane .keypad .unit, .sheet-pane .keypad .go { font-size: 14px; }
+.sheet-pane .keypad button { height: 42px; font-size: 17px; border-radius: 8px; }
+.sheet-pane .keypad .unit, .sheet-pane .keypad .go { font-size: 15px; }
 
 /* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
 .sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
