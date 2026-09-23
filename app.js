@@ -1402,6 +1402,7 @@ function setSheet(open, which) {
   $('#btn-lookup-fab').classList.toggle('on', open);
   if (!open) return;
   const jump = !$('#sheet-jump').hidden;
+  if (jump) updateJumpPreview();
   $(jump ? '#jump-input' : '#find-input').focus();
 }
 
@@ -2321,15 +2322,29 @@ async function doJump() {
   const p = parseJump(law ? rest : raw);
   if (!p) { toast('条文番号として読み取れません'); return; }
 
+  const r = resolveJump(p);
+  if (!r) { toast(`${numLabel(p.art, '条')}は見つかりません`); return; }
+  if (r.note) toast(r.note);
+
+  rememberPos();
+  if (scrollToAnchor(r.anchor, false)) {
+    pushHist({ lawId: P().current.lawId, anchor: r.anchor, scrollTop: 0 });
+  }
+}
+
+/*
+ * 打たれた番号が、いま開いている法令のどこを指すのかを決める。飛ばしはしない。
+ * 引くときと、打ちかけの下見（updateJumpPreview）の両方がここを通る。
+ * 二つに分けて書くと、下見と実際の行き先がずれる。
+ */
+function resolveJump(p) {
   // 本則を先に、見つからなければ附則も探す
   const scopes = ['M', ...new Set(P().index.map(e => e.anchor.split('/')[0]).filter(s => s !== 'M'))];
-
-  const jump = a => { rememberPos(); if (scrollToAnchor(a, false)) pushHist({ lawId: P().current.lawId, anchor: a, scrollTop: 0 }); };
 
   for (const sc of scopes) {
     // 項と号の両方が指定されている
     if (p.par && p.item && findAnchorEl(`${sc}/${p.art}/${p.par}/${p.item}`)) {
-      jump(`${sc}/${p.art}/${p.par}/${p.item}`); return;
+      return { anchor: `${sc}/${p.art}/${p.par}/${p.item}` };
     }
     // 項を省いた号指定（例: 709条3号）。条の下から号を探す。
     if (!p.par && p.item) {
@@ -2337,15 +2352,19 @@ async function doJump() {
         const a = e.anchor.split('/');
         return a.length === 4 && a[0] === sc && a[1] === p.art && a[3] === p.item;
       });
-      if (hit) { jump(hit.anchor); return; }
+      if (hit) return { anchor: hit.anchor };
     }
     if (p.par && findAnchorEl(`${sc}/${p.art}/${p.par}`)) {
-      if (p.item) toast(`第${p.item}号は見つからないため、項までで止めました`);
-      jump(`${sc}/${p.art}/${p.par}`); return;
+      return {
+        anchor: `${sc}/${p.art}/${p.par}`,
+        note: p.item ? `第${p.item}号は見つからないため、項までで止めました` : '',
+      };
     }
     if (findAnchorEl(`${sc}/${p.art}`)) {
-      if (p.par || p.item) toast(`指定の項・号は見つからないため、条までで止めました`);
-      jump(`${sc}/${p.art}`); return;
+      return {
+        anchor: `${sc}/${p.art}`,
+        note: (p.par || p.item) ? '指定の項・号は見つからないため、条までで止めました' : '',
+      };
     }
     // 削除された条は "170:174" のような範囲でまとめられている
     const ranged = P().index.find(e => {
@@ -2353,11 +2372,54 @@ async function doJump() {
       return a.length === 2 && a[0] === sc && numInRange(a[1], p.art);
     });
     if (ranged) {
-      toast(`${numLabel(p.art, '条')}は${numLabel(ranged.anchor.split('/')[1], '条')}にまとめられています`);
-      jump(ranged.anchor); return;
+      return {
+        anchor: ranged.anchor,
+        note: `${numLabel(p.art, '条')}は${numLabel(ranged.anchor.split('/')[1], '条')}にまとめられています`,
+      };
     }
   }
-  toast(`${numLabel(p.art, '条')}は見つかりません`);
+  return null;
+}
+
+/*
+ * 打ちかけの番号が指す条文の頭を出す。
+ * 番号を打っても、それが目当ての条文かどうかは飛んでみるまで分からない。
+ * 先に頭の一文が見えれば、引く前に気づける。打ち間違いにも気づける。
+ */
+function updateJumpPreview() {
+  const box = $('#jump-preview');
+  if (!box) return;
+  const raw = $('#jump-input').value.trim();
+  if (!raw || !P().current) { box.hidden = true; return; }
+
+  const show = (label, body, miss) => {
+    box.hidden = false;
+    box.classList.toggle('miss', !!miss);
+    box.innerHTML = `<span class="pv-label">${esc(label)}</span>`
+      + `<span class="pv-text">${esc(body)}</span>`;
+  };
+
+  const { law, rest } = splitLawPrefix(raw);
+  // 別の法令を指しているときは、開いてみないと中身が読めない
+  if (law && law.lawId !== P().current.lawId) {
+    show(law.lawTitle, '「引く」を押すと開きます', true);
+    return;
+  }
+
+  const p = parseJump(law ? rest : raw);
+  const r = p && resolveJump(p);
+  if (!r) { show(raw, '見つかりません', true); return; }
+
+  const el = findAnchorEl(r.anchor);
+  if (!el) { box.hidden = true; return; }
+  show(anchorLabel(r.anchor), previewTextOf(el), false);
+}
+
+/** 下見に出す文字。自分で書いたメモ・タグ・ルビの読みは混ぜない。 */
+function previewTextOf(el) {
+  const clone = el.cloneNode(true);
+  for (const n of clone.querySelectorAll('.memo-inline, .inline-tags, .note-summary, rt')) n.remove();
+  return clone.textContent.replace(/\s+/g, ' ').trim().slice(0, 140);
 }
 
 /* -------------------------------------------------------------- 全文検索 */
@@ -2923,6 +2985,7 @@ function wireKeypad() {
     else if (k === '✓') { doJump(); return; }
     else input.value += k;
     input.focus();
+    updateJumpPreview();     // 盤からは input イベントが飛ばない
   });
 
   // 盤の外を押したら閉じる（入力欄と盤自身は除く）
@@ -3050,6 +3113,7 @@ function wireGlobal() {
   $('#btn-drawer-close').onclick = () => setDrawer(false);
   $('#scrim').onclick = () => setDrawer(false);
 
+  $('#jump-input').addEventListener('input', updateJumpPreview);
   $('#btn-lookup-fab').onclick = () => setSheet($('#lookup-sheet').hidden);
   $('#lookup-sheet-close').onclick = () => setSheet(false);
   for (const b of $$('#sheet-tabs button')) {

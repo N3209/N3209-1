@@ -30,16 +30,16 @@
     <button id="btn-pad" class="icon-btn" aria-label="テンキー" title="テンキー">⌗</button>
     <button id="jump-go" class="go">引く</button>
 
+    <!-- 条文番号を打つための盤。項・号は打てない。条まで引ければ十分で、
+         キーを増やすほど一つ一つが小さくなり、押し間違いが増える。 -->
     <div id="keypad" class="keypad" hidden>
       <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
       <button data-k="条" class="unit">条</button>
       <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
-      <button data-k="項" class="unit">項</button>
-      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-      <button data-k="号" class="unit">号</button>
       <button data-k="の" class="unit">の</button>
-      <button data-k="0">0</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
       <button data-k="⌫" class="del">⌫</button>
+      <button data-k="0" class="zero">0</button>
       <button data-k="✓" class="go">引く</button>
     </div>
   </div>
@@ -204,7 +204,10 @@
     <button id="lookup-sheet-close" class="pop-close" aria-label="閉じる">×</button>
   </div>
   <div class="sheet-body">
-    <div class="sheet-pane" id="sheet-jump"></div>
+    <div class="sheet-pane" id="sheet-jump">
+      <!-- 打ちながら、その条文の頭が見える。引く前に当たりかどうか分かる。 -->
+      <div id="jump-preview" class="jump-preview" hidden></div>
+    </div>
     <div class="sheet-pane" id="sheet-find" hidden></div>
   </div>
 </div>

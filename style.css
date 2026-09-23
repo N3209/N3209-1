@@ -142,6 +142,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .keypad button:active { background: var(--accent-bg); }
 .keypad .unit { font-family: var(--font-body); font-size: 15px; color: var(--accent); }
 .keypad .go { grid-column: span 2; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; font-size: 15px; }
+.keypad .zero { grid-column: span 2; }
 .keypad .del { color: var(--fg-dim); }
 
 /* ---------------------------------------------------------------- layout */
@@ -225,9 +226,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .fab.on { filter: brightness(.92); }
 
-/* 下から出るシート。条文を隠しきらないよう、画面の下半分までに収める。 */
+/* 下から出るシート。条文を隠しきらないよう、下半分までに収める。
+   幅も全部は使わない。左に余白があると、後ろの条文が途切れずに見える。 */
 .sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 35;
+  position: fixed; left: 20%; right: 0; bottom: 0; z-index: 35;
   display: flex; flex-direction: column; max-height: 62vh;
   background: var(--bg-elev); border-top: 1px solid var(--line);
   border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
@@ -250,6 +252,21 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 12px; }
 .sheet-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sheet-pane[hidden] { display: none; }
+
+/* 打ちかけの番号が指す条文の頭。引く前に当たりかどうか分かる。 */
+.jump-preview {
+  flex: none; margin-bottom: 8px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+  font-size: 12.5px; line-height: 1.55; color: var(--fg-dim);
+}
+.jump-preview[hidden] { display: none; }
+.jump-preview .pv-label { display: block; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.jump-preview .pv-text {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; font-family: var(--font-body);
+}
+.jump-preview.miss { color: var(--fg-dim); }
+.jump-preview.miss .pv-label { color: var(--fg-dim); }
 
 /* 番号で引く。電話と同じ並びで、入力欄が上、盤が下。
    キーの高さは iOS の数字キーボードと同じくらいに合わせてある。
