@@ -118,7 +118,14 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   padding: 5px 10px; margin: 8px 0;
 }
 .law-note[hidden] { display: none; }
-.law-note .warn { color: #b3261e; font-weight: 700; }
+.law-note .warn { color: #b3261e; font-weight: 700; cursor: help; }
+
+/* 注釈欄の中の、位置が重なっているという知らせ */
+.note-dup {
+  background: #fdecea; color: #b3261e; border: 1px solid #f5c2bd;
+  border-radius: 7px; padding: 7px 9px; margin-bottom: 10px;
+  font-family: var(--font-ui); font-size: 11.5px; line-height: 1.55;
+}
 
 .law-warn {
   background: #b3261e; color: #fff;

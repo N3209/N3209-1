@@ -1091,11 +1091,18 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   const note = $('.law-note', pane.root);
   if (rec.source === 'file') {
     note.hidden = false;
+    /*
+     * 帯は短くする。重なりの詳しい話が要るのは、その位置に注釈を付けようと
+     * したときだけである。読んでいる間ずっと出し続ける理由がない。
+     * 詳細は触れたときに出す（下の dupNote）。
+     */
+    const dups = rec.dupAnchors || [];
+    const where = dups.length && dups.every(a => /^S/.test(a)) ? '附則に' : '';
     note.innerHTML = '<span>取り込んだデータ　'
       + esc(rec.importedAt || '') + ' 取り込み　施行日は不明</span>'
-      + ((rec.dupAnchors && rec.dupAnchors.length)
-        ? '<span class="warn">同じ位置を指す条項が ' + rec.dupAnchors.length
-          + '件あります（' + esc(rec.dupAnchors.join('、')) + '）。ここに付けた注釈は、どちらを指すか決まりません</span>'
+      + (dups.length
+        ? '<span class="warn" title="' + esc(dups.join('、')) + '">'
+          + where + '位置の重なりが ' + dups.length + '件</span>'
         : '');
   } else {
     note.hidden = true;
@@ -2567,7 +2574,15 @@ function renderNotePane() {
     || { key, lawId, anchor, tags: [], summary: '', memo: '', color: '' };
   const entry = P().index.find(e => e.anchor === anchor);
 
+  /*
+   * いま選んでいる位置が、取り込んだデータの中で他と重なっているなら、
+   * そのときに言う。付けても「どちらに付けたのか」が決まらない。
+   */
+  const dupHere = (pane.current.dupAnchors || []).includes(anchor);
+
   body.innerHTML = `
+    ${dupHere ? '<div class="note-dup">この位置は、同じ番号の別の条項と重なっています。'
+      + 'ここに付けた注釈は、どちらを指すか決まりません。</div>' : ''}
     <div class="note-quote">${esc(entry ? entry.text : '')}</div>
     <p class="note-label">マーク</p>
     <div class="palette" id="palette"></div>
