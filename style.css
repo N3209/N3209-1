@@ -1,0 +1,938 @@
+:root {
+  --bg: #ffffff;
+  --bg-panel: #f6f7f9;
+  --bg-elev: #ffffff;
+  --bg-hover: #eef1f5;
+  --fg: #111114;
+  --fg-dim: #5c6068;
+  --fg-faint: #9aa0a8;
+  --line: #e1e4e9;
+  --line-soft: #eef0f3;
+  --accent: #1a5fb4;
+  --accent-bg: #e8f0fb;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.08);
+
+  --mk-yellow: #fff3a8;  --mk-yellow-b: #e0b400;
+  --mk-green:  #c9eecb;  --mk-green-b:  #34a03c;
+  --mk-blue:   #cfe3ff;  --mk-blue-b:   #2f6fd0;
+  --mk-red:    #ffd3d3;  --mk-red-b:    #d34848;
+  --mk-orange: #ffdfbb;  --mk-orange-b: #e08a20;
+  --mk-purple: #e8d9fb;  --mk-purple-b: #8a4fd0;
+
+  --font-body: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif JP", serif;
+  --font-ui: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+
+  --text-size: 16px;
+  --text-leading: 1.95;
+  --measure: 46em;          /* 本文の最大行幅 */
+  --ink: #1558b8;           /* 自分で書いた文字の色（条文本文の黒と区別する） */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  -webkit-text-size-adjust: 100%;
+}
+
+body { display: flex; flex-direction: column; overflow: hidden; }
+
+/* ---------------------------------------------------------------- top bar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.brand {
+  font-size: 15px; font-weight: 700; letter-spacing: .14em;
+  margin: 0 6px 0 2px; font-family: var(--font-body); white-space: nowrap;
+}
+
+/* 狭い画面では、上段に ☰ と並べて法令名を出す。
+   条文の上に見出しの塊を置くより、ここに一行あるほうが本文が広く取れる。 */
+.topbar-law {
+  display: none; flex: 1; min-width: 0;
+  align-items: baseline; gap: 6px;
+  font-family: var(--font-body); white-space: nowrap;
+}
+.topbar-law .tl-name {
+  font-size: 16px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+/* 施行日は落とさない。いつの版を読んでいるかは、読み違いに直結する。 */
+.topbar-law .tl-date { flex: none; font-size: 13px; color: var(--fg-dim); }
+
+/*
+ * 改正の印。
+ *   塗りつぶし  手元より新しい版がすでに施行されている（取り込み直す）
+ *   輪郭だけ    改正は公布されたが、まだ施行されていない
+ * 色を分けず形で分けるのは、塗りつぶしの方が「いま効いている」ことを
+ * 一目で表すためである。
+ */
+.amend-dot {
+  display: inline-block; flex: none;
+  width: 8px; height: 8px; border-radius: 4px;
+  border: 1.5px solid var(--accent); background: var(--accent);
+  vertical-align: middle;
+}
+.amend-dot.upcoming { background: transparent; }
+.amend-dot[hidden] { display: none; }
+.amend-dot { cursor: pointer; }
+
+/*
+ * まだ施行されていない版を読んでいるときの帯。
+ * 目立たないと事故になる。いま効いていない条文を、効いていると思って読む
+ * のが一番まずい。だから本文の上に、消せない形で常に出す。
+ */
+/*
+ * 条・項・号の番号は、その単位にタグやメモを付けるための取っ手である。
+ * 本文のどこを触っても注釈欄が開くと、読んでいるだけで邪魔になる。
+ * 触れるものだと分かるよう、番号にだけ下線と余白を持たせる。
+ */
+.article-title, .para-num, .item-title {
+  cursor: pointer; border-radius: 4px;
+  text-decoration: underline; text-decoration-style: dotted;
+  text-underline-offset: 3px; text-decoration-color: var(--line);
+}
+.article-title:hover, .para-num:hover, .item-title:hover {
+  background: var(--accent-bg); text-decoration-color: var(--accent);
+}
+
+.law-warn {
+  background: #b3261e; color: #fff;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; padding: 5px 10px; border-radius: 6px;
+  margin: 8px 0; display: inline-block;
+}
+.law-warn[hidden] { display: none; }
+
+/* 一覧の中の「未施行」札 */
+.law-list .rev-badge {
+  flex: none; font-family: var(--font-ui); font-size: 10px; font-weight: 700;
+  color: #b3261e; border: 1px solid #b3261e; border-radius: 4px;
+  padding: 0 3px; margin-left: 4px;
+}
+
+/* 版の一覧 */
+.rev-list { max-height: 56vh; overflow-y: auto; }
+.rev-list button {
+  display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  border-radius: 9px; padding: 9px 11px; margin-bottom: 6px; cursor: pointer; font: inherit;
+}
+.rev-list button:hover { background: var(--bg-hover); }
+.rev-list button[disabled] { cursor: default; opacity: .75; }
+.rev-list .rv-date { flex: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rev-list .rv-title { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rev-list .rv-state { flex: none; font-size: 11px; font-family: var(--font-ui); }
+.rev-list .rv-state.now { color: var(--accent); font-weight: 700; }
+.rev-list .rv-state.future { color: #b3261e; font-weight: 700; }
+.rev-list .rv-state.past { color: var(--fg-faint); }
+
+/*
+ * 二度続けて押すと画面が拡大してしまうのを止める。
+ * 押すためのものは、拡大の合図として受け取らない。
+ * 二本指での拡大は残す。本文を大きくして読みたいことはあるので、
+ * user-scalable=no のような潰し方はしない。
+ */
+button, .tabs button, .law-name, .article-title, .article-caption,
+.para-num, .item-title, .toc-list li, .law-list li, .mark-list li,
+.find-list li, .rev-list button, a.ref { touch-action: manipulation; }
+
+.icon-btn {
+  border-radius: 8px; width: 34px; height: 34px; font-size: 15px;
+  cursor: pointer; flex: none; line-height: 1;
+}
+.icon-btn:hover { background: var(--bg-hover); }
+.icon-btn.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+
+.jump { display: flex; gap: 4px; flex: none; position: relative; }
+.jump input { width: 150px; }
+
+.jump button {
+  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  border-radius: 8px; padding: 0 12px; cursor: pointer; white-space: nowrap; font: inherit; font-size: 13px;
+}
+.jump .go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.jump .go:hover { filter: brightness(1.08); }
+
+.find { flex: 1; min-width: 90px; }
+.find input { width: 100%; }
+
+.topbar input {
+  height: 34px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-elev); color: var(--fg); padding: 0 10px;
+  font: inherit; font-size: 14px;
+}
+.topbar input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ------------------------------------------------------------- 表示設定 */
+
+.view { position: relative; flex: none; }
+
+.viewpad {
+  position: absolute; top: 40px; right: 0; z-index: 40; width: 236px;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 12px 13px 13px;
+}
+.viewpad[hidden] { display: none; }
+.viewpad .note-label { margin: 0 0 6px; }
+.viewpad .note-label:not(:first-child) { margin-top: 14px; }
+.viewpad .val { color: var(--fg-faint); }
+.viewpad input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+
+.font-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.font-picker button {
+  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  border-radius: 7px; padding: 7px 4px; cursor: pointer; font-size: 12.5px;
+}
+.font-picker button:hover { background: var(--bg-hover); }
+.font-picker button.on {
+  background: var(--accent-bg); border-color: var(--accent);
+  color: var(--accent); font-weight: 600;
+}
+.font-picker button[data-font="mincho"] { font-family: "Hiragino Mincho ProN", "Yu Mincho", "MS PMincho", serif; }
+.font-picker button[data-font="gothic"] { font-family: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif; }
+.font-picker button[data-font="meiryo"] { font-family: "Meiryo", sans-serif; }
+.font-picker button[data-font="ud"] { font-family: "BIZ UDPGothic", "Meiryo", sans-serif; }
+
+#ink-picker button { font-weight: 600; }
+#ink-picker button[data-ink="#1558b8"] { color: #1558b8; }
+#ink-picker button[data-ink="#1e7a46"] { color: #1e7a46; }
+#ink-picker button[data-ink="#b3261e"] { color: #b3261e; }
+#ink-picker button[data-ink="#5c6068"] { color: #5c6068; }
+
+/* ---------------------------------------------------------------- keypad */
+
+.keypad {
+  position: absolute; top: 40px; left: 0; z-index: 40;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow);
+  padding: 8px; display: grid; gap: 6px;
+  grid-template-columns: repeat(4, 52px);
+}
+.keypad[hidden] { display: none; }
+.keypad button {
+  height: 44px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-elev); color: var(--fg);
+  font: inherit; font-size: 17px; cursor: pointer;
+}
+.keypad button:hover { background: var(--bg-hover); }
+.keypad button:active { background: var(--accent-bg); }
+.keypad .unit { font-family: var(--font-body); font-size: 15px; color: var(--accent); }
+/*
+ * 数字は左上から 1〜9 が自動で埋まる。残り3つを置き場所で決める。
+ *
+ *   1 2 3 ⌫     ⌫ は上2段。打ち間違いを消すのは数字を打つ途中なので、
+ *   4 5 6 ⌫     手が数字の近くにあるうちに届く方がよい。
+ *   7 8 9 引    「引く」は下2段。打ち終わってから押すので下に置く。
+ *   の 0   引    「の」は左下（枝番）、0 は下の真ん中。
+ */
+.keypad .del  { grid-column: 4; grid-row: 1 / span 2; }
+.keypad .go   { grid-column: 4; grid-row: 3 / span 2;
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 600; font-size: 15px;
+}
+.keypad .unit { grid-column: 1; grid-row: 4; }
+.keypad .zero { grid-column: 2; grid-row: 4; }
+.keypad .del { color: var(--fg-dim); }
+
+/* ---------------------------------------------------------------- layout */
+
+.layout { flex: 1; display: flex; min-height: 0; }
+.pane { display: flex; flex-direction: column; min-height: 0; }
+
+.pane-left {
+  width: var(--side-width, 268px); flex: none;
+  background: var(--bg-panel); border-right: 1px solid var(--line);
+}
+.pane-main { flex: 1; min-width: 0; background: var(--bg); flex-direction: row; }
+
+/* ドラッグして幅を変える仕切り */
+.splitter {
+  flex: none; width: 6px; cursor: col-resize; background: transparent;
+  position: relative; z-index: 5;
+}
+.splitter[hidden] { display: none; }
+.splitter::after {
+  content: ""; position: absolute; inset: 0 2px;
+  background: transparent; transition: background-color .12s;
+}
+.splitter:hover::after, .splitter.dragging::after { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+
+/* 2面表示 */
+.lawpane {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+  border-left: 1px solid transparent;
+}
+.lawpane[hidden] { display: none; }
+#split-panes + .lawpane { border-left-color: var(--line); }
+/* どちらを操作しているかが分かるように、使っていない面の見出しを落とす */
+#panes.split .lawpane:not(.active) .law-header { opacity: .55; }
+#panes.split .lawpane.active .law-title::before {
+  content: ""; display: inline-block; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--accent); vertical-align: .32em; margin-right: 7px;
+}
+
+.mini {
+  border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
+  border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer;
+}
+.mini:hover { background: var(--bg-hover); }
+
+/* tabs */
+.tabs { display: flex; gap: 2px; padding: 8px 8px 0; flex: none; }
+.tabs button {
+  flex: 1; border: 1px solid transparent; border-bottom: none;
+  background: none; color: var(--fg-dim); cursor: pointer;
+  padding: 7px 4px; font: inherit; font-size: 12.5px; border-radius: 8px 8px 0 0;
+}
+.tabs button:hover { color: var(--fg); }
+.tabs button.on {
+  background: var(--bg-elev); border-color: var(--line);
+  color: var(--fg); font-weight: 600; margin-bottom: -1px;
+}
+/* 狭い画面ではドロワーが画面全体を覆い、☰ が下敷きになって押せない。
+   タブの行の右端に閉じるボタンを出す。広い画面では要らない。 */
+.tab-close {
+  display: none; flex: none; width: 30px;
+  border: 1px solid transparent; background: none; color: var(--fg-dim);
+  cursor: pointer; font-size: 17px; line-height: 1; border-radius: 8px;
+}
+.tab-close:hover { color: var(--fg); background: var(--bg-hover); }
+
+/* ドロワーの外側。触れば閉じる。 */
+.scrim { position: fixed; inset: 0; z-index: 29; background: rgba(17, 20, 24, .32); }
+.scrim[hidden] { display: none; }
+
+/* 狭い画面の下段。戻る・進む・表示設定・引く。
+   どれも片手で押すものなので、上段ではなくここに置く。 */
+.bottombar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 33;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  padding-bottom: calc(7px + env(safe-area-inset-bottom));
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.bottombar[hidden] { display: none; }
+.bb-gap { flex: 1; }
+.bottombar .lookup {
+  flex: none; height: 38px; padding: 0 20px; border-radius: 19px;
+  border: none; background: var(--accent); color: #fff;
+  font: inherit; font-family: var(--font-body); font-size: 15px; font-weight: 700;
+  cursor: pointer;
+}
+.bottombar .lookup.on { filter: brightness(.92); }
+/* 表示設定の札は、下段から出すので上へ開く */
+.bottombar .viewpad { top: auto; bottom: 46px; }
+
+/* 下から出るシート。条文を隠しきらないよう、下半分までに収める。
+   幅は盤に合わせて詰める。盤だけ右に寄って左が空くより、まとまって見える。
+   後ろの条文も、そのぶん途切れずに残る。 */
+.sheet {
+  position: fixed; left: auto; right: 0; bottom: 0; z-index: 35;
+  width: min(94vw, 268px);
+  display: flex; flex-direction: column; max-height: 62vh;
+  background: var(--bg-elev); border-top: 1px solid var(--line);
+  border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.sheet[hidden] { display: none; }
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 10px 12px 8px; flex: none;
+}
+.sheet-tabs { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.sheet-tabs button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg); color: var(--fg-dim);
+  border-radius: 9px; padding: 8px 4px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.sheet-tabs button.on {
+  background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 700;
+}
+
+.sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 12px; }
+.sheet-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sheet-pane[hidden] { display: none; }
+
+/* 打ちかけの番号が指す条文の頭。引く前に当たりかどうか分かる。 */
+.jump-preview {
+  flex: none; margin-bottom: 8px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+  font-size: 12.5px; line-height: 1.55; color: var(--fg-dim);
+}
+.jump-preview[hidden] { display: none; }
+.jump-preview .pv-label { display: block; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.jump-preview .pv-text {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; font-family: var(--font-body);
+}
+.jump-preview.miss { color: var(--fg-dim); }
+.jump-preview.miss .pv-label { color: var(--fg-dim); }
+
+/* 番号で引く。電話と同じ並びで、入力欄が上、盤が下。
+   キーの高さは iOS の数字キーボードと同じくらいに合わせてある。
+   これ以上小さくすると押し間違いが出る。 */
+.sheet-pane .jump { display: flex; flex-direction: column; gap: 6px; }
+.sheet-pane .jump input {
+  width: 100%; height: 38px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--bg); color: var(--fg); padding: 0 12px;
+  font: inherit; font-size: 17px; letter-spacing: .04em;
+}
+.sheet-pane #btn-pad { display: none; }      /* 盤は常に出ているので切替は要らない */
+.sheet-pane .jump > .go { display: none; }   /* 「引く」は盤の中にある */
+/* シートの幅を盤に合わせてあるので、盤は素直に横いっぱいに広げる。
+   1列あたり約48px、高さ42px で、ほぼ正方形になる。 */
+.sheet-pane .keypad {
+  position: static; padding: 0; gap: 6px;
+  border: none; box-shadow: none; background: none;
+  grid-template-columns: repeat(4, 1fr);
+}
+.sheet-pane .keypad button { height: 48px; font-size: 19px; border-radius: 9px; }
+.sheet-pane .keypad .unit, .sheet-pane .keypad .go { font-size: 16px; }
+
+/* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
+.sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
+.sheet-pane .find { flex: none; margin-top: 10px; }
+.sheet-pane .find input {
+  width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--bg); color: var(--fg); padding: 0 12px; font: inherit; font-size: 15px;
+}
+
+.tab-body { flex: 1; overflow-y: auto; background: var(--bg-elev); border-top: 1px solid var(--line); padding: 10px; }
+
+.filter {
+  width: 100%; height: 30px; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--fg); padding: 0 8px; font: inherit; font-size: 13px;
+}
+
+/* ------------------------------------------------------------- law list */
+
+.law-list, .mark-list, .toc-list { list-style: none; margin: 0; padding: 0; }
+
+.law-list li {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1.45;
+}
+.law-list li:hover { background: var(--bg-hover); }
+.law-list li.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.law-list .law-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.law-list .del { border: none; background: none; color: var(--fg-faint); cursor: pointer; font-size: 15px; padding: 0 2px; opacity: 0; }
+.law-list li:hover .del { opacity: 1; }
+.law-list .del:hover { color: #c0392b; }
+
+/* ------------------------------------------------------------------ toc */
+
+.toc-list li {
+  padding: 5px 6px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; line-height: 1.5; display: flex; gap: 8px; align-items: baseline;
+}
+.toc-list li:hover { background: var(--bg-hover); }
+.toc-list .t { flex: 1; min-width: 0; }
+.toc-list .range { color: var(--fg-faint); font-size: 11px; white-space: nowrap; font-family: var(--font-ui); }
+.toc-list .lv1 { font-weight: 700; margin-top: 8px; }
+.toc-list .lv2 { font-weight: 600; padding-left: 10px; }
+.toc-list .lv3 { padding-left: 22px; }
+.toc-list .lv4 { padding-left: 34px; color: var(--fg-dim); }
+.toc-list .lv5 { padding-left: 46px; color: var(--fg-dim); }
+.toc-list .suppl { font-weight: 600; margin-top: 8px; color: var(--fg-dim); }
+
+/* ------------------------------------------------------------- 検索結果 */
+
+.find-scope {
+  border-bottom: 1px solid var(--line); padding-bottom: 9px; margin-bottom: 8px;
+}
+.seg { display: flex; gap: 0; margin-bottom: 7px; }
+.seg button {
+  flex: 1; border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg-dim);
+  padding: 5px 4px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.seg button:first-child { border-radius: 7px 0 0 7px; }
+.seg button:last-child { border-radius: 0 7px 7px 0; border-left: none; }
+.seg button.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+.find-target { display: flex; gap: 12px; font-size: 12px; color: var(--fg-dim); }
+.find-target label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.find-target input { accent-color: var(--accent); margin: 0; }
+
+.find-status { font-size: 11.5px; color: var(--fg-faint); margin-top: 7px; }
+.find-status .q { color: var(--fg); font-weight: 600; }
+
+.find-list { list-style: none; margin: 0; padding: 0; }
+.find-list li {
+  padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
+}
+.find-list li:hover { background: var(--bg-hover); }
+.find-list li.current { background: var(--accent-bg); }
+.find-list .where { font-size: 11px; color: var(--fg-faint); }
+.find-list .where .lawname { color: var(--accent); }
+.find-list .snip {
+  font-family: var(--font-body); font-size: 12.5px; line-height: 1.7; margin-top: 2px;
+}
+.find-list .kind {
+  display: inline-block; font-size: 10px; border: 1px solid var(--line);
+  border-radius: 3px; padding: 0 4px; margin-right: 5px; color: var(--fg-faint);
+}
+
+/* 本文側の一致 */
+mark.hit.cur { background: #ffbf5e; box-shadow: 0 0 0 2px #ffbf5e; }
+
+/* ----------------------------------------------------------- mark list */
+
+.mark-list li {
+  padding: 6px 8px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; display: flex; align-items: center; gap: 8px;
+}
+.mark-list li:hover { background: var(--bg-hover); }
+.mark-list .sw { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.14); flex: none; }
+.mark-list .n { color: var(--fg-faint); font-size: 12px; margin-left: auto; }
+.sub-head { font-size: 11px; letter-spacing: .08em; color: var(--fg-dim); margin: 14px 0 6px; }
+.sub-head.orphan-head { color: #b3261e; margin-top: 0; }
+#orphan-box { border: 1px solid #f0c9c6; border-radius: 8px; padding: 8px 9px; margin-bottom: 12px; }
+#orphan-box[hidden] { display: none; }
+#orphan-list li { display: block; cursor: default; }
+#orphan-list .phrase { font-family: var(--font-body); font-size: 12.5px; }
+#orphan-list .where { font-size: 11px; color: var(--fg-faint); }
+#orphan-list .acts { margin-top: 4px; display: flex; gap: 6px; }
+
+/* ------------------------------------------------------------- law text */
+
+.law-header { padding: 12px 28px 9px; border-bottom: 1px solid var(--line); flex: none; }
+.law-title { font-family: var(--font-body); font-size: 19px; font-weight: 700; }
+.law-meta { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
+
+/* いま画面に出ている編・章・節と条。スクロールに追従する。 */
+.crumb {
+  font-size: 12px; color: var(--fg-dim); margin-top: 5px;
+  display: flex; align-items: baseline; gap: 6px;
+  white-space: nowrap; overflow: hidden;
+}
+.crumb[hidden] { display: none; }
+.crumb .sep { color: var(--fg-faint); }
+.crumb .here { color: var(--accent); font-weight: 600; }
+.crumb .crumb-path { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; }
+.crumb .crumb-art { flex: none; margin-left: 6px; }
+
+.nav { display: flex; gap: 3px; flex: none; }
+.nav .icon-btn { width: 30px; font-size: 14px; }
+.nav .icon-btn[disabled] { opacity: .35; cursor: default; }
+.nav .icon-btn[disabled]:hover { background: var(--bg-elev); }
+
+.toc-list li.current { background: var(--accent-bg); color: var(--accent); }
+
+/*
+ * 本文の幅を測り（--measure）、余りは左右の余白に回す。
+ * 中の要素に max-width を付けるのではなく padding にしているのは、
+ * スクロールバーを画面の端に残すため。
+ */
+.content {
+  flex: 1; overflow-y: auto;
+  padding: 20px max(28px, calc((100% - var(--measure)) / 2)) 45vh;
+  font-family: var(--font-body); font-size: var(--text-size); line-height: var(--text-leading);
+}
+
+.empty { max-width: 460px; margin: 12vh auto; text-align: center; color: var(--fg-dim); font-family: var(--font-ui); }
+.empty .hint { font-size: 12px; color: var(--fg-faint); line-height: 1.7; margin-top: 18px; }
+.primary {
+  border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  border-radius: 8px; padding: 8px 18px; cursor: pointer; font: inherit; font-size: 14px;
+}
+.primary:hover { filter: brightness(1.08); }
+
+.h-part, .h-chapter, .h-section, .h-subsection, .h-division {
+  font-weight: 700; margin: 1.7em 0 .6em; line-height: 1.5; scroll-margin-top: 12px;
+}
+.h-part    { font-size: 1.22em; text-align: center; margin-top: 2.2em; }
+.h-chapter { font-size: 1.12em; text-align: center; }
+.h-section { font-size: 1.04em; }
+.h-subsection, .h-division { font-size: 1em; color: var(--fg-dim); }
+
+.suppl-label {
+  font-weight: 700; margin: 2.4em 0 .6em; font-size: 1.06em;
+  border-top: 1px solid var(--line); padding-top: 1.2em; scroll-margin-top: 12px;
+}
+.enact, .preamble { margin: 1em 0 2em; color: var(--fg-dim); }
+
+.article { margin: 0 0 1.5em; scroll-margin-top: 16px; }
+/* inline-block なのは、選択時の背景が行全体に伸びないようにするため */
+.article-caption { color: var(--fg-dim); font-size: .95em; display: inline-block; }
+.article-title { font-weight: 700; }
+
+.para { margin: .2em 0; scroll-margin-top: 16px; }
+.para-num { font-weight: 700; margin-right: .3em; }
+.item { margin: .1em 0 .1em 1.6em; scroll-margin-top: 16px; }
+.item-title { margin-right: .5em; }
+.subitem1 { margin-left: 1.4em; }
+.subitem2 { margin-left: 2.8em; }
+.column + .column::before { content: "　"; }
+
+ruby rt { font-size: .5em; font-weight: normal; }
+
+/*
+ * 括弧書き。深いほど薄くする。
+ * 既定では薄くしない。設定で切り替えたときだけ効かせる（組み直し不要にするため）。
+ */
+[data-paren="dim"] .paren.p1 { color: color-mix(in srgb, var(--fg) 52%, var(--bg)); }
+[data-paren="dim"] .paren.p2 { color: color-mix(in srgb, var(--fg) 38%, var(--bg)); }
+[data-paren="dim"] .paren.p3 { color: color-mix(in srgb, var(--fg) 30%, var(--bg)); }
+/* 括弧の中の参照リンクも一緒に薄くする。下線だけ残ると浮いて見える。 */
+[data-paren="dim"] .paren a.ref { color: inherit; border-bottom-color: currentColor; opacity: .7; }
+[data-paren="dim"] .paren a.ref:hover { color: var(--accent); opacity: 1; }
+
+/*
+ * 条文参照。本文の見た目を壊さないよう、ふだんは薄い点線だけにする。
+ * 行き先を確かめられなかった参照はリンクを外してあるので、ここには残らない。
+ */
+a.ref {
+  color: inherit; text-decoration: none; cursor: pointer;
+  border-bottom: 1px dotted var(--fg-faint);
+}
+a.ref:hover { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-bg); }
+[data-annot="none"] a.ref { border-bottom: none; }
+
+.law-table { border-collapse: collapse; margin: 1em 0; font-size: .92em; line-height: 1.7; }
+.law-table td, .law-table th {
+  border: 1px solid var(--line); padding: 5px 10px; vertical-align: top; text-align: left;
+}
+.law-table th { background: var(--bg-panel); font-weight: 600; }
+
+.appdx { margin: 2.4em 0 1.5em; scroll-margin-top: 16px; }
+.appdx > .h-section:first-child { border-top: 1px solid var(--line); padding-top: 1.2em; margin-top: 0; }
+.fig { color: var(--fg-faint); font-family: var(--font-ui); font-size: .85em; }
+
+/* 選択とマーク */
+
+[data-anchor] { position: relative; cursor: pointer; }
+
+/*
+ * 選択とホバーは「条文番号そのもの」に出す。本文全体を囲うと読む邪魔になる。
+ * box-shadow で膨らませているのは、padding だと後ろの文字がずれるため。
+ */
+.para-num, .item-title, .article-title, .article-caption {
+  border-radius: 3px;
+  transition: outline-color .08s;
+}
+
+[data-anchor]:hover > .para-num,
+[data-anchor]:hover > .item-title,
+[data-anchor]:hover > .article-title,
+[data-anchor]:hover > .article-caption,
+[data-anchor]:hover > .para > .article-title {
+  outline: 1.5px solid var(--line);
+  outline-offset: 3px;
+}
+/* 内側の号などにカーソルがあるときは、外側の項番号に枠を出さない */
+[data-anchor]:has([data-anchor]:hover) > .para-num,
+[data-anchor]:has([data-anchor]:hover) > .article-caption,
+[data-anchor]:has([data-anchor]:hover) > .para > .article-title {
+  outline: none;
+}
+
+[data-anchor].sel > .para-num,
+[data-anchor].sel > .item-title,
+[data-anchor].sel > .article-title,
+[data-anchor].sel > .article-caption,
+[data-anchor].sel > .para > .article-title {
+  outline: 1.5px solid var(--accent) !important;
+  outline-offset: 3px;
+}
+
+/* 番号を持たない塊（前文・別表）は輪郭で示すしかない */
+.preamble.sel, .appdx.sel { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+/* マークは条文番号の左に小さな●を置くだけ。本文の見え方は変えない。 */
+.mk::before {
+  content: "";
+  position: absolute; left: -.95em; top: .72em;
+  width: .48em; height: .48em; border-radius: 50%;
+  background: var(--dot);
+}
+.mk-yellow { --dot: var(--mk-yellow-b); }
+.mk-green  { --dot: var(--mk-green-b); }
+.mk-blue   { --dot: var(--mk-blue-b); }
+.mk-red    { --dot: var(--mk-red-b); }
+.mk-orange { --dot: var(--mk-orange-b); }
+.mk-purple { --dot: var(--mk-purple-b); }
+
+/*
+ * 要約は条文番号のすぐ後ろ、本文の手前に出る。
+ * 自分で書いた言葉なので、条文本文と取り違えないよう書体と色を変え、角括弧で囲む。
+ */
+.note-summary {
+  display: block;                 /* 本文に割り込ませず、独立した行にする */
+  font-family: var(--font-ui); font-size: .82em; line-height: 1.6;
+  color: var(--ink);
+  border-left: 3px solid color-mix(in srgb, var(--ink) 30%, transparent);
+  padding: 1px 0 1px 9px;
+  margin: .25em 0 .3em 1.2em;
+}
+.mk .note-summary { border-left-color: var(--dot); color: inherit; }
+
+/* メモは条文の下にぶら下げる */
+.memo-inline {
+  font-family: var(--font-ui); font-size: 12.5px; line-height: 1.75;
+  color: var(--ink); white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid color-mix(in srgb, var(--ink) 30%, transparent);
+  padding: 2px 0 2px 10px;
+  margin: .35em 0 .5em 1.2em;
+}
+.mk .memo-inline { border-left-color: var(--dot); }
+
+.inline-tags { font-family: var(--font-ui); font-size: 11px; margin-left: .5em; white-space: nowrap; }
+.inline-tags .t {
+  display: inline-block; color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent); border-radius: 4px;
+  padding: 0 5px; margin-right: 3px; vertical-align: .18em;
+}
+
+mark.hit { background: #ffe97a; color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* --------------------------------------------------------- 文言へのメモ */
+
+/* 本文中の塗り。条項号の●とは違い、こちらは文字そのものに掛かる。 */
+mark.rng {
+  background: var(--mk-yellow); color: inherit;
+  border-radius: 2px; padding: 0 1px; cursor: pointer;
+}
+mark.rng-yellow { background: var(--mk-yellow); }
+mark.rng-green  { background: var(--mk-green); }
+mark.rng-blue   { background: var(--mk-blue); }
+mark.rng-red    { background: var(--mk-red); }
+mark.rng-orange { background: var(--mk-orange); }
+mark.rng-purple { background: var(--mk-purple); }
+mark.rng:hover { filter: brightness(.94); }
+/* メモ付きは下に点線を引いて、色だけのものと区別する */
+mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
+
+.selbar {
+  position: fixed; z-index: 55; display: flex; align-items: center; gap: 5px;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 6px 7px;
+}
+.selbar[hidden] { display: none; }
+.selbar button {
+  width: 26px; height: 26px; border-radius: 6px; padding: 0; cursor: pointer;
+  border: 1px solid rgba(0,0,0,.14);
+}
+.selbar button:hover { transform: scale(1.08); }
+.selbar .memo {
+  width: auto; padding: 0 10px; height: 26px; background: var(--bg-elev);
+  border-color: var(--line); color: var(--fg); font: inherit; font-size: 12px;
+}
+.selbar .memo:hover { background: var(--bg-hover); transform: none; }
+
+/* カーソルを合わせたときに出るメモの吹き出し */
+.tip {
+  position: fixed; z-index: 58; max-width: 320px;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 9px; box-shadow: var(--shadow);
+  padding: 8px 11px;
+  font-family: var(--font-ui); font-size: 12.5px; line-height: 1.7; color: var(--ink);
+  white-space: pre-wrap; word-break: break-word;
+  pointer-events: none;                 /* 吹き出し自体はカーソルを受けない */
+}
+.tip[hidden] { display: none; }
+.tip .tip-head {
+  font-size: 10.5px; letter-spacing: .08em; color: var(--fg-faint);
+  margin-bottom: 3px; white-space: nowrap;
+}
+
+/* 注釈の表示量。原文だけで通読したいときのため。 */
+[data-annot="marks"] .memo-inline,
+[data-annot="marks"] .inline-tags,
+[data-annot="marks"] .note-summary,
+[data-annot="none"] .memo-inline,
+[data-annot="none"] .inline-tags,
+[data-annot="none"] .note-summary { display: none; }
+
+[data-annot="none"] .mk::before { display: none; }
+[data-annot="none"] mark.rng {
+  background: none; border-bottom: none; padding: 0; cursor: auto;
+}
+
+/* ------------------------------------------------------- 注釈のポップアップ */
+
+.popover {
+  position: fixed; z-index: 50; width: 320px;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; max-height: min(62vh, 520px);
+}
+.popover[hidden] { display: none; }
+
+.popover-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px 9px 13px; border-bottom: 1px solid var(--line); flex: none;
+}
+.pop-anchor { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; }
+.pop-close {
+  border: none; background: none; color: var(--fg-faint);
+  font-size: 19px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 6px;
+}
+.pop-close:hover { background: var(--bg-hover); color: var(--fg); }
+
+.popover-body { flex: 1; overflow-y: auto; padding: 12px 13px 14px; }
+
+.note-quote {
+  font-family: var(--font-body); font-size: 12.5px; line-height: 1.75;
+  color: var(--fg-dim);
+  background: var(--bg-panel); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 14px; max-height: 7em; overflow-y: auto;
+}
+.note-label { font-size: 11px; letter-spacing: .08em; color: var(--fg-dim); margin: 0 0 6px; }
+
+.palette { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 18px; }
+.palette button {
+  width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(0,0,0,.14); padding: 0; position: relative;
+}
+.palette button.on::after {
+  content: "✓"; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; color: #1a1a1a;
+}
+.palette .none { background: var(--bg-elev); color: var(--fg-faint); font-size: 16px; line-height: 1; }
+
+.note-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+
+/* 使ったことのあるタグ。押すと付く。 */
+.tag-known { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tag-known-btn {
+  border: 1px dashed var(--line); background: none; color: var(--fg-dim);
+  border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.tag-known-btn:hover { border-style: solid; color: var(--accent); border-color: var(--accent); }
+.note-tags .chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-elev); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 8px; font-size: 12px;
+}
+.note-tags .chip button { border: none; background: none; cursor: pointer; color: var(--fg-faint); padding: 0; font-size: 13px; }
+.note-tags .chip button:hover { color: #c0392b; }
+
+#tag-input, #memo-input {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-elev); color: var(--fg); font: inherit; padding: 8px 10px;
+}
+#summary-input, #tag-input { height: 32px; font-size: 13px; margin-bottom: 16px; }
+#summary-input {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-elev); color: var(--fg); font: inherit; padding: 0 10px;
+}
+#summary-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#memo-input { min-height: 104px; font-size: 13px; line-height: 1.7; resize: vertical; }
+#tag-input:focus, #memo-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.saved-at { font-size: 11px; color: var(--fg-faint); margin-top: 8px; }
+.hint { font-size: 12px; color: var(--fg-faint); line-height: 1.7; }
+
+/* -------------------------------------------------------------- dialogs */
+
+dialog {
+  border: 1px solid var(--line); border-radius: 14px;
+  background: var(--bg-elev); color: var(--fg); box-shadow: var(--shadow);
+  padding: 0; width: min(620px, 92vw);
+}
+dialog::backdrop { background: rgba(16,24,40,.35); }
+.dlg-form { padding: 18px 20px 14px; }
+.dlg-form h2 { margin: 0 0 14px; font-size: 15px; font-weight: 700; }
+.count { color: var(--fg-faint); font-weight: normal; font-size: 13px; }
+.dlg-form .row { display: flex; gap: 8px; margin-bottom: 12px; }
+.dlg-form .row input {
+  flex: 1; height: 36px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--fg); padding: 0 10px; font: inherit; font-size: 14px;
+}
+.dlg-actions { display: flex; justify-content: flex-end; margin: 12px 0 0; padding: 0; }
+.dlg-actions button {
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  border-radius: 8px; padding: 6px 16px; cursor: pointer; font: inherit; font-size: 13px;
+}
+
+.add-results, .find-results { max-height: 52vh; overflow-y: auto; }
+.add-results .r, .find-results .r {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 8px; border: 1px solid transparent;
+}
+.add-results .r:hover, .find-results .r:hover { background: var(--bg-panel); border-color: var(--line); }
+.add-results .r .info { flex: 1; min-width: 0; }
+.add-results .r .name { font-size: 14px; }
+.add-results .r .sub, .find-results .r .sub { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
+.find-results .r { cursor: pointer; display: block; }
+.find-results .r .snippet { font-family: var(--font-body); font-size: 13px; line-height: 1.8; margin-top: 3px; }
+.add-results .r button {
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.add-results .r button[disabled] { opacity: .5; cursor: default; }
+
+/* ---------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: #16181d; color: #fff; padding: 9px 18px; border-radius: 999px;
+  font-size: 13px; box-shadow: var(--shadow); z-index: 60;
+}
+
+/* ----------------------------------------------------------- responsive */
+
+#btn-menu { display: none; }
+
+/* 狭い画面では画面下から出るシートにする */
+@media (max-width: 640px) {
+  .popover {
+    left: 0 !important; right: 0; top: auto !important; bottom: 0;
+    width: auto; border-radius: 14px 14px 0 0; max-height: 72vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (max-width: 800px) {
+  .pane-left { display: none; }
+  .pane-left.open {
+    display: flex; position: fixed; left: 0; top: 0; bottom: 0;
+    width: min(300px, 82vw); z-index: 30; box-shadow: var(--shadow);
+  }
+  #btn-menu { display: block; }
+  .tab-close { display: block; }
+
+  /* 上段は ☰ と法令名だけにする。番号の欄・検索の欄・戻る進む・表示設定は
+     すべて下へ移す（placeControls が DOM ごと動かす）。
+     片手で持つと上段は遠い。よく使うものほど下に置く。 */
+  .brand { display: none; }
+  .topbar-law { display: flex; }
+
+  /* 法令名は上段に出したので、本文の上は「いまどこを読んでいるか」だけ。
+     見出しが無いときは高さを持たない。 */
+  .law-header { padding: 0 16px; border-bottom: none; }
+  .law-title, .law-meta { display: none; }   /* 名前も施行日も上段に出している */
+  /* 二段にする。道筋が長くても、いまの条は下の段に必ず出る。 */
+  .crumb {
+    margin-top: 0; padding: 6px 0; border-bottom: 1px solid var(--line);
+    display: block; line-height: 1.5;
+  }
+  .crumb .crumb-path {
+    display: block; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .crumb .crumb-art { display: block; margin-left: 0; }
+
+  .content { padding: 16px 16px 45vh; }
+}
+
+@media (max-width: 640px) {
+  /* この幅で2面に割っても、どちらも読めない */
+  #btn-split { display: none; }
+}
