@@ -883,8 +883,15 @@ function nthIndexOf(hay, needle, nth) {
  * tag を変えられるようにしてあるのは、文言メモ（mark）と括弧書き（span）を
  * 別物として扱い、片方の塗り直しでもう片方を巻き込まないようにするため。
  */
-function wrapInMap(el, s, e, cls, id, tag) {
-  const map = textMapOf(el);           // 直前の加工で位置が動くので毎回作り直す
+/*
+ * el の中の s〜e 文字目を包む。
+ *
+ * map を渡さなければ毎回作り直す。渡す場合は、呼ぶ側が後ろから順に
+ * 当てていること。前から当てると、包んだ拍子に後ろの位置がずれる。
+ * 作り直しが効くのは、同じ条文に何十回も当てるとき（検索の強調・括弧）。
+ */
+function wrapInMap(el, s, e, cls, id, tag, map0) {
+  const map = map0 || textMapOf(el);
   const hits = map.nodes.filter(seg => Math.max(s, seg.start) < Math.min(e, seg.end));
   for (const seg of hits) {
     const a = Math.max(s, seg.start), b = Math.min(e, seg.end);
@@ -1093,6 +1100,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   // 絞り込みは法令をまたいでも保つ。同じタグを別の法令で続けて見たいため。
   applyFilter(pane);
   renderFilterPicker();
+  pane._crumbSig = null;     // 別の法令でも見出しIDは h1 から振り直される
   measureHeadings(pane);
 
   if (anchor) scrollToAnchor(anchor, false, pane);
@@ -1154,21 +1162,47 @@ function trimLawName(name) {
  * 号だけ指定されて項が無い場合は、その条の下から号を探す。
  */
 /*
+ * 索引から引きやすい形を一度だけ作って覚えておく。
+ *
+ * 参照リンクは会社法で4,800本あり、1本ごとに索引6,318件を端から見ていた。
+ * 掛け算になるので、開くたびに数百万回の照合が走っていた。
+ */
+const indexTables = new WeakMap();
+
+function tableOf(index) {
+  let t = indexTables.get(index);
+  if (t) return t;
+  t = { has: new Set(), item: new Map(), arts: new Map() };
+  for (const e of index) {
+    t.has.add(e.anchor);
+    const p = e.anchor.split('/');
+    if (p.length === 2) {
+      if (!t.arts.has(p[0])) t.arts.set(p[0], []);
+      t.arts.get(p[0]).push(p[1]);
+    }
+    if (p.length === 4) {
+      // 項を書かずに号だけ指す書き方のため。複数あるなら決め手が無いので null。
+      const k = p[0] + '/' + p[1] + '/' + p[3];
+      t.item.set(k, t.item.has(k) ? null : e.anchor);
+    }
+  }
+  indexTables.set(index, t);
+  return t;
+}
+
+/*
  * 参照の行き先を決める。書いてあるとおりの場所が無ければ諦める。
  * 「第99号」と書いてあるのに条へ飛ばす、という黙った読み替えをしない。
  * 飛んだ先が違うことには、読んでいる側は気づけない。
  */
 function bestAnchor(index, scope, art, par, item) {
-  const has = a => index.some(e => e.anchor === a);
+  const t = tableOf(index);
+  const has = a => t.has.has(a);
   if (par && item && has(`${scope}/${art}/${par}/${item}`)) return `${scope}/${art}/${par}/${item}`;
   if (!par && item) {
     // 項を書かずに号だけ指す書き方。同じ号が複数の項にあると決め手が無い。
     // 最初の1件を選ぶと、黙って別の項へ連れて行くことになる。
-    const hits = index.filter(e => {
-      const p = e.anchor.split('/');
-      return p.length === 4 && p[0] === scope && p[1] === art && p[3] === item;
-    });
-    return hits.length === 1 ? hits[0].anchor : null;
+    return t.item.get(`${scope}/${art}/${item}`) || null;
   }
   if (item) return null;
   if (par && has(`${scope}/${art}/${par}`)) return `${scope}/${art}/${par}`;
@@ -1192,9 +1226,7 @@ function resolveRelative(a, pane) {
   let targetArt = art;
   if (rel === '前条' || rel === '次条') {
     // 条は枝番があるので番号の足し算では解けない。並び順で隣を取る。
-    const arts = pane.index
-      .filter(e => { const p = e.anchor.split('/'); return p.length === 2 && p[0] === scope; })
-      .map(e => e.anchor.split('/')[1]);
+    const arts = tableOf(pane.index).arts.get(scope) || [];
     const i = arts.indexOf(art);
     if (i < 0) return null;
     targetArt = arts[i + (rel === '前条' ? -1 : 1)];
@@ -1340,11 +1372,20 @@ function wirePanes() {
     p.root.addEventListener('pointerdown', () => {
       if (state.split && P() !== p) setActivePane(p.idx);
     });
+    /*
+     * スクロールは指を滑らせている間ずっと飛んでくる（iOS で毎秒60回ほど）。
+     * そのたびに帯を作り直し、目次を全部舐めていたので、長い法令ほど
+     * 指に付いてこなくなっていた。1フレームに1回までにする。
+     */
     p.el.addEventListener('scroll', () => {
-      positionPopover();
-      updateCrumb(p);
       hideTip();
       if (p === P()) { clearTimeout(p._t); p._t = setTimeout(rememberPos, 300); }
+      if (p._raf) return;
+      p._raf = requestAnimationFrame(() => {
+        p._raf = 0;
+        positionPopover();
+        updateCrumb(p);
+      });
     }, { passive: true });
   }
 
@@ -1435,11 +1476,18 @@ function applyFilter(pane) {
 
   if (!pane.filter || !pane.current) {
     banner.hidden = true;
-    measureHeadings(pane);
-    return 0;
+    return 0;                 // 見出しの測り直しは呼ぶ側でする（openLaw で二度走っていた）
   }
 
-  const want = [...filterAnchors(pane)];
+  /*
+   * 注釈のアンカーから、それを含む塊のアンカーを先に作っておく。
+   * 塊ごとに注釈を全部見比べると、条数 × 注釈数の掛け算になる。
+   */
+  const want = new Set();
+  for (const a of filterAnchors(pane)) {
+    const p2 = a.split('/');
+    for (let i = 1; i <= p2.length; i++) want.add(p2.slice(0, i).join('/'));
+  }
   const levelOf = new Map(pane.toc.map(e => [e.id, e.level]));
 
   // 条・前文・別表・附則直下の項など、本文の塊ごとに見せるかを決める
@@ -1448,7 +1496,7 @@ function applyFilter(pane) {
   for (const el of kids) {
     const a = el.dataset && el.dataset.anchor;
     if (!a) { show.set(el, false); continue; }
-    const hit = want.some(m => m === a || m.startsWith(a + '/'));
+    const hit = want.has(a);
     show.set(el, hit);
     if (hit) shown++;
   }
@@ -1476,8 +1524,6 @@ function applyFilter(pane) {
   b.textContent = '全文に戻す';
   b.onclick = () => setFilter(null, pane);
   banner.appendChild(b);
-
-  measureHeadings(pane);
   return shown;
 }
 
@@ -1485,6 +1531,7 @@ function setFilter(f, pane) {
   pane = pane || P();
   pane.filter = f;
   applyFilter(pane);
+  measureHeadings(pane);      // 隠すと位置が変わる
   pane.el.scrollTop = 0;      // 絞ると並びが変わる。前の位置に意味がない。
   updateCrumb(pane);
   renderFilterPicker();
@@ -1713,6 +1760,8 @@ function lastAtOrBefore(list, y) {
   return found;
 }
 
+let tocCurrent = null;      // 目次でいま光っている項目
+
 function updateCrumb(pane) {
   pane = pane || P();
   const crumb = pane.crumb;
@@ -1732,6 +1781,14 @@ function updateCrumb(pane) {
   }
 
   const art = lastAtOrBefore(pane.articleOffsets, y);
+
+  /*
+   * 指を滑らせている間、ほとんどのフレームでは同じ見出し・同じ条のままである。
+   * 変わっていないなら何もしない。作り直しと目次の塗り替えが丸ごと消える。
+   */
+  const sig = here.id + '|' + (art ? art.anchor : '');
+  if (pane._crumbSig === sig && !crumb.hidden) return;
+  pane._crumbSig = sig;
   const parts = chain.map((e, i) =>
     `<span class="${i === chain.length - 1 && !art ? 'here' : ''}">${esc(e.title)}</span>`);
 
@@ -1745,9 +1802,15 @@ function updateCrumb(pane) {
     + (art ? `<span class="crumb-art here">${esc(anchorLabel(art.anchor))}</span>` : '');
   crumb.hidden = false;
 
-  // 目次の現在位置は、操作している面にだけ追随させる
+  /*
+   * 目次の現在位置は、操作している面にだけ追随させる。
+   * 全部を舐めると、民法で384件・会社法で592件を毎回触ることになる。
+   * 外す1件と付ける1件だけを触る。
+   */
   if (pane === P()) {
-    for (const li of $$('#toc-list li')) li.classList.toggle('current', li.dataset.id === here.id);
+    if (tocCurrent && tocCurrent.isConnected) tocCurrent.classList.remove('current');
+    tocCurrent = $(`#toc-list li[data-id="${CSS.escape(here.id)}"]`);
+    if (tocCurrent) tocCurrent.classList.add('current');
   }
 }
 
@@ -1914,18 +1977,23 @@ function paintNotes() {
 }
 
 function paintNotesIn(pane) {
-  $$('[data-anchor]', pane.el).forEach(el => {
+  /*
+   * 前に塗ったものを外す。全アンカー（会社法で6,318件）を舐めるのではなく、
+   * 実際に塗ってあるものだけを外す。注釈が1件も無ければ何も起きない。
+   */
+  for (const el of $$('.mk', pane.el)) {
     el.classList.remove('mk');
     MARK_COLORS.forEach(c => el.classList.remove('mk-' + c.key));
-    for (const sel of [':scope > .inline-tags', ':scope > .memo-inline', ':scope > .note-summary']) {
-      const old = el.querySelector(sel);
-      if (old) old.remove();
-    }
-  });
+  }
+  for (const el of $$('.inline-tags, .memo-inline, .note-summary', pane.el)) el.remove();
+
   if (!pane.current) return;
-  for (const el of $$('[data-anchor]', pane.el)) {
-    const n = state.notes.get(noteKey(pane.current.lawId, el.dataset.anchor));
-    if (!n) continue;
+
+  // 塗る先も、注釈のある場所だけを引く。本文を端から見ない。
+  for (const n of state.notes.values()) {
+    if (n.lawId !== pane.current.lawId) continue;
+    const el = findAnchorEl(n.anchor, pane);
+    if (!el) continue;
     if (n.color) el.classList.add('mk', 'mk-' + n.color);
     if (n.tags && n.tags.length) {
       const span = document.createElement('span');
@@ -2232,6 +2300,7 @@ function amendTitle(a) {
 function renderToc() {
   const ul = $('#toc-list');
   ul.innerHTML = '';
+  tocCurrent = null;         // 作り直したので、前の参照はもう繋がっていない
   if (!P().toc.length) {
     ul.innerHTML = '<li style="color:var(--fg-faint);cursor:default">この法令に見出しはありません</li>';
     return;
@@ -2672,7 +2741,7 @@ function paintParens(pane) {
     }
     for (let k = runs.length - 1; k >= 0; k--) {
       const r = runs[k];
-      wrapInMap(el, r.s, r.e, 'paren p' + Math.min(r.d, 3), 'paren', 'span');
+      wrapInMap(el, r.s, r.e, 'paren p' + Math.min(r.d, 3), 'paren', 'span', map);
     }
   }
 }
@@ -3169,11 +3238,13 @@ function paintFindHits() {
       .filter(r => r.lawId === pane.current.lawId && r.kind === '本文')
       .map(r => r.anchor));
     for (const anchor of anchors) {
-      const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
+      const el = findAnchorEl(anchor, pane);        // 本文全体を探し直さない
       if (!el) continue;
       const map = textMapOf(el);
-      for (const [s2, e2] of normalizedRanges(map.text, q)) {
-        wrapInMap(el, s2, e2, 'hit', 'find', 'mark');
+      // 後ろから当てれば、前の位置はずれない。対応表を作り直さずに済む。
+      const runs = [...normalizedRanges(map.text, q)];
+      for (let i = runs.length - 1; i >= 0; i--) {
+        wrapInMap(el, runs[i][0], runs[i][1], 'hit', 'find', 'mark', map);
       }
     }
   }
