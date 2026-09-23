@@ -118,6 +118,11 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .law-warn[hidden] { display: none; }
 
 /* 一覧の中の「未施行」札 */
+/* 数えた範囲を添える。全部を数えたと思われると見落としにつながる。 */
+.sub-head .sub-scope {
+  font-weight: normal; font-size: 10.5px; color: var(--fg-faint); margin-left: 6px;
+}
+
 .law-list .rev-badge {
   flex: none; font-family: var(--font-ui); font-size: 10px; font-weight: 700;
   color: #b3261e; border: 1px solid #b3261e; border-radius: 4px;
