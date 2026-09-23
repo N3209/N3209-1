@@ -846,7 +846,7 @@ function textMapOf(el) {
       const p = n.parentElement;
       if (!p) return NodeFilter.FILTER_REJECT;
       // 自分で書いた文字は本文ではない。数に入れると文言メモの位置がずれる。
-      if (p.closest('.memo-inline, .inline-tags, .note-summary')) return NodeFilter.FILTER_REJECT;
+      if (p.closest('.memo-inline, .inline-tags, .note-summary, .slash')) return NodeFilter.FILTER_REJECT;
       if (p.closest('rt')) return NodeFilter.FILTER_REJECT;
       if (p.closest('[data-anchor]') !== el) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
@@ -2508,7 +2508,8 @@ function allMarks() {
   }
   for (const r of state.ranges.values()) {
     out.push({
-      kind: 'range', id: r.id, lawId: r.lawId, anchor: r.anchor,
+      kind: isSlash(r) ? 'slash' : 'range', id: r.id, lawId: r.lawId, anchor: r.anchor,
+      slash: SLASH_KINDS[r.kind] || '',
       color: r.color || '', tags: [],
       memo: String(r.memo || '').trim(),
       phrase: r.text || '',
@@ -2531,7 +2532,8 @@ function renderMarkList() {
   const ml = $('#mark-list');
   ml.innerHTML = '';
   const used = MARK_COLORS.filter(c => byColor.get(c.key));
-  if (!used.length && !memoCount) {
+  const anySlash = marks.some(m => m.kind === 'slash');
+  if (!used.length && !memoCount && !anySlash) {
     ml.innerHTML = '<li style="color:var(--fg-faint);cursor:default">まだありません</li>';
   }
   for (const c of used) {
@@ -2541,6 +2543,16 @@ function renderMarkList() {
     li.onclick = () => showMarkResults(m => m.color === c.key, `${c.label}のマーク`);
     ml.appendChild(li);
   }
+  // 区切りは色もメモも持たないので、専用の行が無いと一覧から辿れない
+  const slashCount = marks.filter(m => m.kind === 'slash').length;
+  if (slashCount) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="sw" style="background:var(--ink)"></span>'
+      + `<span>区切りの印</span><span class="n">${slashCount}</span>`;
+    li.onclick = () => showMarkResults(m => m.kind === 'slash', '区切りの印');
+    ml.appendChild(li);
+  }
+
   if (memoCount) {
     const li = document.createElement('li');
     li.innerHTML = '<span class="sw" style="background:var(--ink)"></span>'
@@ -2768,20 +2780,182 @@ function paintRangesIn(pane) {
     m.remove();
     parent.normalize();
   }
+  // 区切りの印は中身を持たないので、そのまま外す。片付けを忘れると重なって増える。
+  for (const m of $$('span[data-slash-id]', pane.el)) {
+    const parent = m.parentNode;
+    m.remove();
+    parent.normalize();
+  }
   if (!pane.current) return;
 
   for (const r of state.ranges.values()) {
     if (r.lawId !== pane.current.lawId) continue;
-    const el = $(`[data-anchor="${CSS.escape(r.anchor)}"]`, pane.el);
+    const el = findAnchorEl(r.anchor, pane);
     if (!el) { state.orphanRanges.push(r); continue; }
     const map = textMapOf(el);
     // 指定の出現が無いときに最初の一致へ寄せると、別の文言に注釈が移ってしまう。
     // 「黙って別の場所に付けない」方針のとおり、見つからなければ要確認にする。
     const at = nthIndexOf(map.text, r.text, r.nth || 1);
     if (at < 0) { state.orphanRanges.push(r); continue; }
-    wrapInMap(el, at, at + r.text.length,
-      'rng' + (r.color ? ' rng-' + r.color : '') + (r.memo ? ' has-memo' : ''), r.id);
+    if (isSlash(r)) {
+      // 「。」の直後に置く。文言そのものは包まない。
+      placePointInMap(el, at + r.text.length,
+        'slash' + (r.kind === 'dslash' ? ' dslash' : ''), r.id, map);
+    } else {
+      wrapInMap(el, at, at + r.text.length,
+        'rng' + (r.color ? ' rng-' + r.color : '') + (r.memo ? ' has-memo' : ''), r.id);
+    }
   }
+}
+
+
+/* ------------------------------------------------------- 区切りの印（/ //） */
+
+/*
+ * 紙の六法に手で引く「/」と同じもの。本文とただし書、前段と後段の境目に
+ * 自分で引く。自動では引かない。
+ *
+ * 法令標準XMLは、ただし書を Sentence@Function="proviso" として持っているし、
+ * 前段後段も Sentence が分かれている（民法339組・会社法339組など実測）。
+ * それを読んで自動で出すこともできるが、そうしない。民法だけで339箇所に
+ * 一斉に出ても、ほとんどは線を引きたい場所ではない。印を付ける行為そのものが
+ * 読むことの一部であり、自動で出たものは自分が引いた線ではない。
+ * 加えて、取り込んだデータには構造が無いことがある（民事訴訟規則は Function
+ * ゼロ・文の分割もゼロ）。手で引く形なら、データの質に左右されない。
+ *
+ * 位置の持ち方は文言メモと同じ。「。」までの数文字と、その条項号の中で
+ * 何番目の出現かで持つ。文字の位置では持たない。改正で一字変われば全部ずれる。
+ *
+ * 本文に「/」の文字は入れない。条文に無い文字なので、検索・コピー・書き出し・
+ * 他の注釈の位置計算に混ざる。幅ゼロの印を置いて CSS で描く。
+ */
+
+const SLASH_KINDS = { slash: '/', dslash: '//' };
+
+/** 区切りか。kind を持たない古い記録は、これまでどおり文言メモ。 */
+function isSlash(r) { return !!(r && SLASH_KINDS[r.kind]); }
+
+/**
+ * el の中の pos 文字目に、幅ゼロの印を置く。
+ * wrapInMap は正の長さが無いと何も作らないので、こちらは別に用意する。
+ */
+function placePointInMap(el, pos, cls, id, map0) {
+  const map = map0 || textMapOf(el);
+  const seg = map.nodes.find(x => pos >= x.start && pos <= x.end);
+  if (!seg) return false;
+  const node = seg.node;
+  const off = pos - seg.start;
+  const mark = document.createElement('span');
+  mark.className = cls;
+  mark.dataset.slashId = id;
+
+  if (off <= 0) {
+    node.parentNode.insertBefore(mark, node);
+  } else if (off >= node.nodeValue.length) {
+    // その文字ノードの末尾。親の末尾ではなく、この文字ノードのすぐ後ろに置く。
+    // 親の末尾に付けると、後ろにぶら下がるメモより外に出てしまう。
+    node.parentNode.insertBefore(mark, node.nextSibling);
+  } else {
+    const rest = node.splitText(off);
+    rest.parentNode.insertBefore(mark, rest);
+  }
+  return true;
+}
+
+/*
+ * 押した場所の近くにある「。」を探す。
+ *
+ * 「。」を一つずつ要素で包むことはしない。民法だけで3,000個を超えるので、
+ * 読むための本文がそのぶん重くなる。押された座標から文字の位置を割り出し、
+ * その前後だけを見る。
+ */
+function sentenceEndNear(x, y) {
+  let node = null, off = 0;
+  if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(x, y);
+    if (r) { node = r.startContainer; off = r.startOffset; }
+  } else if (document.caretPositionFromPoint) {
+    const r = document.caretPositionFromPoint(x, y);
+    if (r) { node = r.offsetNode; off = r.offset; }
+  }
+  if (!node || node.nodeType !== 3) return null;
+
+  const el = node.parentElement && node.parentElement.closest('[data-anchor]');
+  if (!el) return null;
+
+  const map = textMapOf(el);
+  const seg = map.nodes.find(s2 => s2.node === node);
+  if (!seg) return null;
+  const at = seg.start + off;
+
+  // 押した位置の前後3文字だけを見る。離れた「。」には反応しない。
+  const NEAR = 3;
+  let best = -1;
+  for (let d = 0; d <= NEAR; d++) {
+    for (const i of [at + d, at - d]) {
+      if (i < 0 || i >= map.text.length) continue;
+      if (map.text[i] === '。') { best = i; break; }
+    }
+    if (best >= 0) break;
+  }
+  if (best < 0) return null;
+
+  // 「。」までの数文字を覚える。これが位置決めの手がかりになる。
+  const from = Math.max(0, best - 7);
+  const text = map.text.slice(from, best + 1);
+  let nth = 0;
+  for (let i = 0; i + text.length <= best + 1; i++) {
+    if (map.text.startsWith(text, i)) nth++;
+  }
+  return { anchor: el.dataset.anchor, text, nth, at: best + 1 };
+}
+
+let slashPending = null;      // これから付ける位置、または付いている印
+
+function showSlashBar(atRect, current) {
+  const bar = $('#slashbar');
+  bar.hidden = false;
+  const w = bar.offsetWidth, h = bar.offsetHeight, pad = 12;
+  bar.style.left = Math.min(Math.max(pad, atRect.left + atRect.width / 2 - w / 2),
+    window.innerWidth - w - pad) + 'px';
+  // 選択の色バーと同じ考え方で、下に出す。iOS の「コピー・調べる」と重ならない。
+  const barEl = $('#bottombar');
+  const floor = window.innerHeight - pad - (barEl && !barEl.hidden ? barEl.offsetHeight : 0);
+  let top = atRect.bottom + 10;
+  if (top + h > floor) top = atRect.top - h - 10;
+  bar.style.top = Math.max(pad, top) + 'px';
+
+  for (const b of $$('#slashbar button')) {
+    b.classList.toggle('on', !!current && b.dataset.slash === current.kind);
+  }
+}
+
+function hideSlashBar() { $('#slashbar').hidden = true; slashPending = null; }
+
+async function applySlash(kind) {
+  const p = slashPending;
+  hideSlashBar();
+  if (!p || !P().current) return;
+
+  if (p.id) {                                   // すでに付いている印を押した
+    if (kind === 'none') { await deleteRange(p.id); return; }
+    const rec = state.ranges.get(p.id);
+    if (!rec) return;
+    rec.kind = kind;
+    await saveRange(rec);
+    return;
+  }
+  if (kind === 'none') return;
+
+  await saveRange({
+    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+    lawId: P().current.lawId,
+    anchor: p.anchor,
+    kind,
+    text: p.text,
+    nth: p.nth,
+    color: '', memo: '',
+  });
 }
 
 /** 選択範囲から範囲注釈を作る。単一の条項号の中に収まっている場合だけ。 */
@@ -3298,6 +3472,7 @@ async function doFind() {
       });
     }
     for (const r of state.ranges.values()) {
+      if (isSlash(r)) continue;   // 区切りは位置決めの文字列を持つだけ。メモではない
       if (!ids.has(r.lawId)) continue;
       if (!normalize((r.memo || '') + ' ' + r.text).includes(q)) continue;
       const law = state.laws.find(l => l.lawId === r.lawId);
@@ -3468,6 +3643,7 @@ function showMarkResults(pred, title) {
       + (m.color ? `<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--mk-${m.color});vertical-align:-1px;margin-right:6px"></span>` : '')
       + `${esc(law ? law.lawTitle : m.lawId)}　${esc(anchorLabel(m.anchor))}`
       + (m.kind === 'range' ? '　<span style="color:var(--fg-faint)">文言</span>' : '')
+      + (m.kind === 'slash' ? `　<span style="color:var(--ink);font-weight:700">${esc(m.slash)}</span>` : '')
       + '</div>'
       // 文言に付けたものは、その文言そのものを出す。条文の頭だけでは見分けられない。
       + (m.phrase ? `<div class="snippet">「${esc(m.phrase.slice(0, 60))}」</div>`
@@ -3789,6 +3965,10 @@ function wire() {
     try { await importBackup(f); } catch (err) { toast('復元できませんでした: ' + err.message); }
   };
 
+  for (const b of $$('#slashbar button')) {
+    b.onclick = () => applySlash(b.dataset.slash);
+  }
+
   $('#btn-import-law').onclick = () => $('#import-file').click();
   $('#import-file').onchange = async e => {
     const f = e.target.files && e.target.files[0];
@@ -3821,9 +4001,38 @@ function bindPaneEvents(pane) {
     }
     const mk = e.target.closest('mark[data-range-id]');
     if (mk) { openRangePopover(mk.dataset.rangeId); return; }
+
+    // すでに付いている区切りの印を押した
+    const sl = e.target.closest && e.target.closest('span[data-slash-id]');
+    if (sl) {
+      const rec = state.ranges.get(sl.dataset.slashId);
+      slashPending = { id: sl.dataset.slashId };
+      showSlashBar(sl.getBoundingClientRect(), rec);
+      return;
+    }
+    hideSlashBar();
+
     // 文字を選択している最中は編集を開かない（範囲注釈を付けたいだけのことが多い）
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
+
+    /*
+     * 「。」の近くを押したら、区切りの印を出す入口を開く。
+     * 本文のそれ以外の場所は、これまでどおり何も起きない。
+     */
+    const near = sentenceEndNear(e.clientX, e.clientY);
+    if (near) {
+      slashPending = near;
+      const r = document.createRange();
+      const map = textMapOf(findAnchorEl(near.anchor, pane) || pane.el);
+      const seg = map.nodes.find(x => near.at >= x.start && near.at <= x.end);
+      if (seg) {
+        r.setStart(seg.node, Math.max(0, near.at - seg.start - 1));
+        r.setEnd(seg.node, Math.min(seg.node.nodeValue.length, near.at - seg.start));
+        showSlashBar(r.getBoundingClientRect(), null);
+        return;
+      }
+    }
 
     /*
      * 注釈欄を開くのは、条・項・号の「番号」を押したときだけにする。
