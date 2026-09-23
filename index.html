@@ -115,9 +115,9 @@
   <!-- 左: 法令 / 目次 / マーク -->
   <aside id="pane-laws" class="pane pane-left">
     <div class="tabs" role="tablist">
-      <button id="tab-laws" class="on" data-tab="laws">法令</button>
-      <button id="tab-toc" data-tab="toc">目次</button>
-      <button id="tab-marks" data-tab="marks">マーク</button>
+      <button class="on" data-tab="laws">法令</button>
+      <button data-tab="toc">目次</button>
+      <button data-tab="marks">マーク</button>
       <button id="tab-find" data-tab="find">検索</button>
       <button id="btn-drawer-close" class="tab-close" aria-label="閉じる">×</button>
     </div>
@@ -271,8 +271,6 @@
       <button type="button" id="exp-restore" class="mini">復元する…</button>
       <input id="restore-file" type="file" accept="application/json,.json" hidden>
     </div>
-
-    <div id="export-law" style="margin-top:18px"></div>
 
     <menu class="dlg-actions"><button value="close">閉じる</button></menu>
   </form>
