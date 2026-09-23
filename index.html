@@ -89,6 +89,9 @@
         <button type="button" data-paren="dim">薄く</button>
       </div>
 
+      <p class="note-label">タグで絞る</p>
+      <div class="font-picker" id="filter-picker" style="grid-template-columns:1fr 1fr"></div>
+
       <p class="note-label">注釈の表示</p>
       <div class="font-picker" id="annot-picker" style="grid-template-columns:1fr 1fr 1fr">
         <button type="button" data-annot="all">すべて</button>
@@ -117,7 +120,7 @@
     <div class="tabs" role="tablist">
       <button class="on" data-tab="laws">法令</button>
       <button data-tab="toc">目次</button>
-      <button data-tab="marks">マーク</button>
+      <button data-tab="marks">印とメモ</button>
       <button id="tab-find" data-tab="find">検索</button>
       <button id="btn-drawer-close" class="tab-close" aria-label="閉じる">×</button>
     </div>
@@ -171,6 +174,7 @@
     <section class="lawpane active" data-pane="0">
       <div class="law-header" hidden>
         <div class="law-warn" hidden></div>
+        <div class="law-filter" hidden></div>
         <div class="law-title"></div>
         <div class="law-meta"></div>
         <div class="crumb" hidden></div>
@@ -189,6 +193,7 @@
     <section class="lawpane" data-pane="1" hidden>
       <div class="law-header" hidden>
         <div class="law-warn" hidden></div>
+        <div class="law-filter" hidden></div>
         <div class="law-title"></div>
         <div class="law-meta"></div>
         <div class="crumb" hidden></div>

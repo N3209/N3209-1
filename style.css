@@ -117,6 +117,29 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 }
 .law-warn[hidden] { display: none; }
 
+/*
+ * 絞り込み中の帯。
+ * 法令の一部しか出ていないのに全部だと思って読むのが一番まずい。
+ * 消せない形で常に出し、ここからしか全文に戻れないようにはしない
+ * （表示設定からも戻せる）が、出ていることは必ず分かるようにする。
+ */
+.law-filter {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--accent-bg); color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 6px;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  padding: 5px 10px; margin: 8px 0;
+}
+.law-filter[hidden] { display: none; }
+.law-filter button {
+  border: 1px solid var(--accent); background: var(--bg-elev); color: var(--accent);
+  border-radius: 6px; padding: 2px 9px; font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.law-filter button:hover { background: var(--accent); color: #fff; }
+
+/* 絞り込みで隠した塊。表示を消すだけで、本文そのものは触らない。 */
+.filtered-out { display: none !important; }
+
 /* 一覧の中の「未施行」札 */
 /* 数えた範囲を添える。全部を数えたと思われると見落としにつながる。 */
 .sub-head .sub-scope {

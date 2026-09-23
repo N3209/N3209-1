@@ -916,6 +916,7 @@ function makePane(idx) {
     meta: $('.law-meta', root),
     crumb: $('.crumb', root),
     current: null,
+    filter: null,          // { tag } か { marked: true }。保存しない（下の注記を見よ）
     index: [],
     toc: [],
     headOffsets: [],
@@ -1089,6 +1090,9 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   paintNotesIn(pane);
   paintRangesIn(pane);
   closePopover();                        // 前の法令の注釈パネルは閉じる
+  // 絞り込みは法令をまたいでも保つ。同じタグを別の法令で続けて見たいため。
+  applyFilter(pane);
+  renderFilterPicker();
   measureHeadings(pane);
 
   if (anchor) scrollToAnchor(anchor, false, pane);
@@ -1381,6 +1385,147 @@ function wirePanes() {
   setSplit(wantSplit);
 }
 
+/* ------------------------------------------------------------ 絞り込み */
+
+/*
+ * 印を付けたところだけを、本文の形のまま残す。
+ *
+ * 抜粋を別画面に並べるより、条文の順に、前後の見出しごと読める方がよい。
+ * ただし二つ、譲れないことがある。
+ *
+ *   1. 絞り込み中はそれと分かる帯を必ず出す。法令の一部しか出ていないのに
+ *      全部だと思って読むのが、この道具で起こりうる一番まずいことである。
+ *   2. 次に開いたときは全文に戻す。書体や文字の大きさと違って、これを
+ *      持ち越すと、気づかないまま欠けた法令を読むことになる。
+ *      だから view（localStorage に残る設定）には入れない。
+ *
+ * 隠す単位は「条」にしてある。条番号は第1項の中に置かれているので、
+ * 項だけを残すと番号が消えて、何条か分からない条文が並ぶ。
+ */
+
+/** その絞り込みに合う注釈のアンカーを集める。 */
+function filterAnchors(pane) {
+  const f = pane.filter;
+  const lawId = pane.current && pane.current.lawId;
+  const out = new Set();
+  if (!f || !lawId) return out;
+
+  for (const n of state.notes.values()) {
+    if (n.lawId !== lawId) continue;
+    const hit = f.tag
+      ? (n.tags || []).includes(f.tag)
+      : !!(n.color || (n.tags || []).length
+        || String(n.summary || '').trim() || String(n.memo || '').trim());
+    if (hit) out.add(n.anchor);
+  }
+  // 文言に付けたものは、タグを持たない。「印のあるもの」のときだけ数える。
+  if (!f.tag) {
+    for (const r of state.ranges.values()) {
+      if (r.lawId === lawId) out.add(r.anchor);
+    }
+  }
+  return out;
+}
+
+function applyFilter(pane) {
+  pane = pane || P();
+  const banner = $('.law-filter', pane.root);
+  const kids = [...pane.el.children];
+  for (const el of kids) el.classList.remove('filtered-out');
+
+  if (!pane.filter || !pane.current) {
+    banner.hidden = true;
+    measureHeadings(pane);
+    return 0;
+  }
+
+  const want = [...filterAnchors(pane)];
+  const levelOf = new Map(pane.toc.map(e => [e.id, e.level]));
+
+  // 条・前文・別表・附則直下の項など、本文の塊ごとに見せるかを決める
+  const show = new Map();
+  let shown = 0;
+  for (const el of kids) {
+    const a = el.dataset && el.dataset.anchor;
+    if (!a) { show.set(el, false); continue; }
+    const hit = want.some(m => m === a || m.startsWith(a + '/'));
+    show.set(el, hit);
+    if (hit) shown++;
+  }
+
+  // 見出しは、その下に残るものがあるときだけ出す。
+  // 見出しだけが並ぶのも、見出しが消えて文脈が切れるのも困る。
+  const stack = [];
+  for (const el of kids) {
+    if (levelOf.has(el.id)) {
+      const lv = levelOf.get(el.id);
+      while (stack.length && levelOf.get(stack[stack.length - 1].id) >= lv) stack.pop();
+      stack.push(el);
+    } else if (show.get(el)) {
+      for (const h of stack) show.set(h, true);
+    }
+  }
+
+  for (const el of kids) if (!show.get(el)) el.classList.add('filtered-out');
+
+  const name = pane.filter.tag ? `タグ「${pane.filter.tag}」` : '印のあるもの';
+  banner.hidden = false;
+  banner.innerHTML = `<span>${esc(name)}で絞り込み中　${shown}件</span>`;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = '全文に戻す';
+  b.onclick = () => setFilter(null, pane);
+  banner.appendChild(b);
+
+  measureHeadings(pane);
+  return shown;
+}
+
+function setFilter(f, pane) {
+  pane = pane || P();
+  pane.filter = f;
+  applyFilter(pane);
+  pane.el.scrollTop = 0;      // 絞ると並びが変わる。前の位置に意味がない。
+  updateCrumb(pane);
+  renderFilterPicker();
+}
+
+/** 表示設定の中の選び口。いま開いている法令に実際にあるタグだけ出す。 */
+function renderFilterPicker() {
+  const box = $('#filter-picker');
+  if (!box) return;
+  const pane = P();
+  box.innerHTML = '';
+
+  const add = (label, f, on) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (on) b.classList.add('on');
+    b.onclick = () => setFilter(f, pane);
+    box.appendChild(b);
+  };
+
+  add('すべて', null, !pane.filter);
+  if (!pane.current) return;
+
+  const lawId = pane.current.lawId;
+  let marked = 0;
+  const tags = new Map();
+  for (const n of state.notes.values()) {
+    if (n.lawId !== lawId) continue;
+    if (n.color || (n.tags || []).length
+      || String(n.summary || '').trim() || String(n.memo || '').trim()) marked++;
+    for (const t of (n.tags || [])) tags.set(t, (tags.get(t) || 0) + 1);
+  }
+  for (const r of state.ranges.values()) if (r.lawId === lawId) marked++;
+
+  if (marked) add('印のあるもの', { marked: true }, !!(pane.filter && !pane.filter.tag));
+  for (const [t] of [...tags].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ja'))) {
+    add(t, { tag: t }, !!(pane.filter && pane.filter.tag === t));
+  }
+}
+
 /* ------------------------------------------------- 移動の履歴と読書位置 */
 
 const lastPos = new Map();      // lawId -> scrollTop
@@ -1397,6 +1542,8 @@ function loadLastPos() {
 
 function rememberPos() {
   if (!P().current) return;
+  // 絞り込み中の位置は、全文で開き直したときには別の場所を指す。覚えない。
+  if (P().filter) return;
   const top = P().el.scrollTop;
   lastPos.set(P().current.lawId, top);
   // 履歴は面をまたいで1本なので、同じ法令・同じ面のときだけ書き戻す。
@@ -1613,6 +1760,12 @@ function scrollToAnchor(anchor, edit, pane) {
   pane = pane || P();
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
   if (!el) return false;
+  // 絞り込みで隠れている先へ飛ぶときは、黙ってではなく全文に戻してから飛ぶ。
+  // 隠れたままスクロールしても、画面は何も起きていないように見える。
+  if (pane.filter && el.closest('.filtered-out')) {
+    setFilter(null, pane);
+    toast('全文に戻しました');
+  }
   el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   selectAnchor(anchor, edit, pane);
   return true;
@@ -1753,6 +1906,7 @@ async function loadNotes() {
   const all = await store.allNotes();
   state.notes = new Map(all.map(n => [n.key, n]));
   renderMarkList();
+  renderFilterPicker();
 }
 
 function paintNotes() {
@@ -2378,6 +2532,7 @@ async function saveNote(note) {
     return;
   }
   renderMarkList();
+  renderFilterPicker();
   paintNotes();
   paintRanges();
   if (state.selected) {
@@ -2470,6 +2625,7 @@ async function saveRange(rec) {
   state.ranges.set(rec.id, rec);
   paintRanges();
   renderMarkList();
+  renderFilterPicker();
 }
 
 async function deleteRange(id) {
@@ -2477,6 +2633,7 @@ async function deleteRange(id) {
   state.ranges.delete(id);
   paintRanges();
   renderMarkList();
+  renderFilterPicker();
   closePopover();
 }
 
