@@ -19,7 +19,11 @@
   <button id="btn-menu" class="icon-btn" aria-label="法令と目次">☰</button>
   <h1 class="brand">六法</h1>
   <!-- 狭い画面では、上段は ☰ と法令名だけにする -->
-  <span id="topbar-law" class="topbar-law"></span>
+  <span id="topbar-law" class="topbar-law">
+    <span class="tl-name"></span>
+    <span class="tl-dot" hidden></span>
+    <span class="tl-date"></span>
+  </span>
 
   <div class="nav">
     <button id="btn-back" class="icon-btn" aria-label="戻る" title="戻る (Alt+←)" disabled>←</button>
@@ -122,6 +126,7 @@
       <div style="display:flex;gap:6px;margin-bottom:8px">
         <input id="law-filter" type="search" class="filter" style="margin:0" placeholder="取込済みを絞り込む">
         <button id="btn-add-law" class="mini" style="white-space:nowrap">＋ 追加</button>
+        <button id="btn-check" class="mini" title="改正が出ていないか e-Gov に問い合わせる">⟳</button>
         <button id="btn-export" class="mini" title="書き出しと復元">⤓</button>
       </div>
       <ul id="law-list" class="law-list"></ul>

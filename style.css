@@ -63,9 +63,31 @@ body { display: flex; flex-direction: column; overflow: hidden; }
    条文の上に見出しの塊を置くより、ここに一行あるほうが本文が広く取れる。 */
 .topbar-law {
   display: none; flex: 1; min-width: 0;
-  font-family: var(--font-body); font-size: 16px; font-weight: 700;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  align-items: baseline; gap: 6px;
+  font-family: var(--font-body); white-space: nowrap;
 }
+.topbar-law .tl-name {
+  font-size: 16px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+/* 施行日は落とさない。いつの版を読んでいるかは、読み違いに直結する。 */
+.topbar-law .tl-date { flex: none; font-size: 11px; color: var(--fg-dim); }
+
+/*
+ * 改正の印。
+ *   塗りつぶし  手元より新しい版がすでに施行されている（取り込み直す）
+ *   輪郭だけ    改正は公布されたが、まだ施行されていない
+ * 色を分けず形で分けるのは、塗りつぶしの方が「いま効いている」ことを
+ * 一目で表すためである。
+ */
+.amend-dot {
+  display: inline-block; flex: none;
+  width: 8px; height: 8px; border-radius: 4px;
+  border: 1.5px solid var(--accent); background: var(--accent);
+  vertical-align: middle;
+}
+.amend-dot.upcoming { background: transparent; }
+.amend-dot[hidden] { display: none; }
 
 .icon-btn {
   border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
@@ -807,12 +829,12 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
      すべて下へ移す（placeControls が DOM ごと動かす）。
      片手で持つと上段は遠い。よく使うものほど下に置く。 */
   .brand { display: none; }
-  .topbar-law { display: block; }
+  .topbar-law { display: flex; }
 
   /* 法令名は上段に出したので、本文の上は「いまどこを読んでいるか」だけ。
      見出しが無いときは高さを持たない。 */
   .law-header { padding: 0 16px; border-bottom: none; }
-  .law-title, .law-meta { display: none; }
+  .law-title, .law-meta { display: none; }   /* 名前も施行日も上段に出している */
   .crumb { margin-top: 0; padding: 7px 0; border-bottom: 1px solid var(--line); }
 
   .content { padding: 16px 16px 45vh; }

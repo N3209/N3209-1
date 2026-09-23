@@ -209,7 +209,19 @@ async function apiSearchLaws(title) {
     category: (it.revision_info || {}).category,
     updated: (it.revision_info || {}).updated,
     enforcementDate: (it.revision_info || {}).amendment_enforcement_date,
+    lawRevisionId: (it.revision_info || {}).law_revision_id,
   })).filter(x => x.lawId);
+}
+
+/*
+ * その法令の版の一覧。まだ施行されていない改正も入っている。
+ * 例：民法は 2029-06-23 施行予定の改正が、いまの時点で返ってくる。
+ */
+async function apiRevisions(lawId) {
+  const r = await fetch(`${API}/law_revisions/${encodeURIComponent(lawId)}`);
+  if (!r.ok) throw new Error('版の一覧を取得できません (' + r.status + ')');
+  const d = await r.json();
+  return d.revisions || [];
 }
 
 async function apiFetchLaw(lawId) {
@@ -1000,7 +1012,9 @@ function renderLawList() {
   for (const l of list) {
     const li = document.createElement('li');
     li.className = P().current && P().current.lawId === l.lawId ? 'active' : '';
+    const a = amendOf(l.lawId);
     li.innerHTML = `<span class="law-name" title="${esc(l.lawTitle)}">${esc(l.lawTitle)}</span>`
+      + (a ? `<span class="amend-dot ${a.kind === 'upcoming' ? 'upcoming' : ''}" title="${esc(amendTitle(a))}"></span>` : '')
       + `<button class="del" title="削除">×</button>`;
     li.querySelector('.law-name').onclick = () => navigate(l.lawId);
     li.querySelector('.del').onclick = async e => {
@@ -1239,7 +1253,15 @@ async function followRef(a, toOtherPane) {
 function syncTopbarLaw() {
   const el = $('#topbar-law');
   if (!el) return;
-  el.textContent = (P().current && P().current.lawTitle) || '';
+  const rec = P().current;
+  $('.tl-name', el).textContent = (rec && rec.lawTitle) || '';
+  $('.tl-date', el).textContent = (rec && rec.enforcementDate) ? '施行 ' + rec.enforcementDate : '';
+
+  const dot = $('.tl-dot', el);
+  const a = rec && amendOf(rec.lawId);
+  dot.hidden = !a;
+  dot.className = 'tl-dot amend-dot' + (a && a.kind === 'upcoming' ? ' upcoming' : '');
+  dot.title = a ? amendTitle(a) : '';
 }
 
 function setActivePane(idx) {
@@ -1785,6 +1807,125 @@ function updateInlineMemo(anchor, text, pane) {
     el.appendChild(div);
   }
   div.textContent = text;
+}
+
+/* -------------------------------------------------------------- 改正の追従 */
+
+/*
+ * 手元の法令に改正が出ていないかを e-Gov に問い合わせ、名前の横に印を出す。
+ *
+ *   塗りつぶし  手元より新しい版がすでに施行されている
+ *   輪郭だけ    改正は公布されたが、まだ施行されていない
+ *
+ * 未施行のものも出すのは、読んでいる条文が近く変わると分かっていることに
+ * 意味があるからである。改正を知らずに古い条文で考えるのが一番まずい。
+ *
+ * 結果は localStorage に置く。法令そのものではなく、問い合わせて分かった
+ * ことに過ぎないので、消えても取り直せる。バックアップにも入れない。
+ */
+const AMEND_KEY = 'roppo.amend';
+let amendState = {};
+
+function loadAmendState() {
+  try { amendState = JSON.parse(localStorage.getItem(AMEND_KEY) || '{}'); }
+  catch (e) { amendState = {}; }
+}
+
+function saveAmendState() {
+  try { localStorage.setItem(AMEND_KEY, JSON.stringify(amendState)); } catch (e) { /* 任意 */ }
+}
+
+function today() {
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+}
+
+/* 1法令ぶんの判定。通信できないときは何も言わない（黙って古い印を残す）。 */
+async function checkAmendment(law) {
+  const revs = await apiRevisions(law.lawId);
+  if (!revs.length) return null;
+
+  const now = today();
+  const enforced = revs.filter(r => r.amendment_enforcement_date && r.amendment_enforcement_date <= now);
+  const future = revs.filter(r => r.amendment_enforcement_date && r.amendment_enforcement_date > now);
+
+  // 施行済みのうち一番新しいもの＝いま効いている版
+  enforced.sort((a, b) => (a.amendment_enforcement_date < b.amendment_enforcement_date ? -1 : 1));
+  const latest = enforced[enforced.length - 1];
+
+  // 取り込んだときの版が分からない古い記録は、施行日で見比べる
+  const behind = latest && (law.lawRevisionId
+    ? latest.law_revision_id !== law.lawRevisionId
+    : !!(law.enforcementDate && latest.amendment_enforcement_date > law.enforcementDate));
+
+  if (behind) {
+    return {
+      kind: 'behind',
+      date: latest.amendment_enforcement_date,
+      title: latest.amendment_law_title || '',
+      at: Date.now(),
+    };
+  }
+
+  future.sort((a, b) => (a.amendment_enforcement_date < b.amendment_enforcement_date ? -1 : 1));
+  if (future.length) {
+    return {
+      kind: 'upcoming',
+      date: future[0].amendment_enforcement_date,
+      title: future[0].amendment_law_title || '',
+      at: Date.now(),
+    };
+  }
+  return { kind: 'none', at: Date.now() };
+}
+
+/* 全法令ぶん。1日に1度でよいので、呼び出し側で間隔を見る。 */
+async function checkAmendments(loud) {
+  if (!state.laws.length) { if (loud) toast('取り込んだ法令がありません'); return; }
+  let behind = 0, upcoming = 0, failed = 0;
+
+  for (const law of state.laws) {
+    try {
+      const r = await checkAmendment(law);
+      if (r) {
+        amendState[law.lawId] = r;
+        if (r.kind === 'behind') behind++;
+        if (r.kind === 'upcoming') upcoming++;
+      }
+    } catch (e) {
+      failed++;                    // 圏外・通信断。黙って前の印を残す
+    }
+  }
+  saveAmendState();
+  try { localStorage.setItem('roppo.amendCheckedAt', String(Date.now())); } catch (e) { /* 任意 */ }
+  renderLawList();
+  syncTopbarLaw();
+
+  if (!loud) return;
+  if (failed === state.laws.length) { toast('e-Gov に問い合わせできませんでした'); return; }
+  const parts = [];
+  if (behind) parts.push(`新しい版が出ている法令 ${behind}件`);
+  if (upcoming) parts.push(`未施行の改正がある法令 ${upcoming}件`);
+  toast(parts.length ? parts.join('　/　') : '手元の法令はすべて最新です');
+}
+
+/* 1日に1度だけ、静かに確かめる。圏外なら何も起きない。 */
+function checkAmendmentsIfStale() {
+  let at = 0;
+  try { at = Number(localStorage.getItem('roppo.amendCheckedAt')) || 0; } catch (e) { /* 任意 */ }
+  if (Date.now() - at < 24 * 60 * 60 * 1000) return;
+  checkAmendments(false).catch(() => { /* 圏外なら黙って諦める */ });
+}
+
+function amendOf(lawId) {
+  const a = amendState[lawId];
+  return (a && a.kind && a.kind !== 'none') ? a : null;
+}
+
+function amendTitle(a) {
+  const head = a.kind === 'behind' ? '新しい版が出ています' : '未施行の改正があります';
+  return head + '　施行 ' + a.date + (a.title ? '　' + a.title : '');
 }
 
 /* ------------------------------------------------------------------ 目次 */
@@ -3186,6 +3327,7 @@ function wireGlobal() {
   $('#btn-drawer-close').onclick = () => setDrawer(false);
   $('#scrim').onclick = () => setDrawer(false);
 
+  $('#btn-check').onclick = () => checkAmendments(true);
   $('#jump-input').addEventListener('input', updateJumpPreview);
   $('#btn-lookup-fab').onclick = () => setSheet($('#lookup-sheet').hidden);
   $('#lookup-sheet-close').onclick = () => setSheet(false);
@@ -3307,6 +3449,7 @@ function registerServiceWorker() {
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
   placeControls();
+  loadAmendState();
   await loadNotes();
   await loadRanges();
   await refreshLawList();
@@ -3319,5 +3462,6 @@ function registerServiceWorker() {
     await openLaw(first);
     pushHist({ lawId: first, anchor: null, scrollTop: P().el.scrollTop });
   }
+  checkAmendmentsIfStale();     // 通信できるときだけ、1日に1度
   window.addEventListener('pagehide', rememberPos);
 })();
