@@ -495,6 +495,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
 .sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
+/* 範囲切替と状態の行は、結果が伸びても上に貼り付けておく。
+   流れて見えなくなると、いま何を探しているのか分からなくなる。 */
+.sheet-pane #panel-find .find-scope {
+  position: sticky; top: 0; z-index: 1; background: var(--bg-elev);
+  padding-bottom: 4px;
+}
 .sheet-pane .find { flex: none; margin-top: 10px; }
 .sheet-pane .find input { height: 40px; font-size: 15px; }
 

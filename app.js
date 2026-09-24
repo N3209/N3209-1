@@ -3597,7 +3597,7 @@ const FIND_LIMIT = 500;
  * 範囲を明示して選べるようにし、結果は左ペインに残す。
  */
 const find = {
-  q: '', where: 'law', inText: true, inNotes: true,
+  q: '', where: 'law', inText: true, inNotes: true, busy: false,
   results: [], at: -1, truncated: false, scopeLawId: null,
 };
 
@@ -3634,6 +3634,16 @@ async function doFind() {
     : state.laws;
 
   const token = ++findToken;
+  /*
+   * 探している間、古い結果が残っていると、新しい語で探しているのか
+   * 分からない。特にスマホのシートでは結果が上に積まれるので、状態の行が
+   * 流れて見えなくなる。先に古い結果を消して「探しています」を出す。
+   */
+  find.busy = true;
+  find.results = [];
+  find.truncated = false;
+  renderFindList();
+
   const results = [];
   let truncated = false;
 
@@ -3679,6 +3689,7 @@ async function doFind() {
   }
 
   if (token !== findToken) return;
+  find.busy = false;
   find.results = results;
   find.truncated = truncated;
   find.at = -1;
@@ -3690,6 +3701,7 @@ async function doFind() {
 }
 
 function clearFind() {
+  find.busy = false;
   find.results = [];
   find.at = -1;
   renderFindList();
@@ -3704,6 +3716,7 @@ function clearFind() {
  * 打った言葉は欄に残すので、もう一度 Enter を押せば戻せる。
  */
 function endFind() {
+  find.busy = false;
   find.q = '';
   find.results = [];
   find.at = -1;
@@ -3776,12 +3789,15 @@ function renderFindList() {
 
   const where = find.where === 'law'
     ? (P().current ? P().current.lawTitle : '法令未選択') : `全法令（${state.laws.length}件）`;
-  status.innerHTML = find.q
-    ? `<span class="q">${esc(find.q)}</span> を ${esc(where)} から　${find.results.length}件`
-      + (find.truncated ? '（上限で打ち切り）' : '')
-    : `${esc(where)} を対象に検索します`;
+  status.innerHTML = !find.q
+    ? `${esc(where)} を対象に検索します`
+    : find.busy
+      ? `<span class="q">${esc(find.q)}</span> を ${esc(where)} から探しています…`
+      : `<span class="q">${esc(find.q)}</span> を ${esc(where)} から　${find.results.length}件`
+        + (find.truncated ? '（上限で打ち切り）' : '');
 
   if (!find.q) return;
+  if (find.busy) return;          // 探している間は、古い一覧を出さない
   if (!find.results.length) {
     ul.innerHTML = '<li style="color:var(--fg-faint);cursor:default">見つかりませんでした</li>';
     return;
