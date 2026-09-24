@@ -2591,7 +2591,7 @@ function allMarks() {
   const out = [];
   for (const n of state.notes.values()) {
     out.push({
-      kind: 'note', lawId: n.lawId, anchor: n.anchor,
+      kind: 'note', lawId: n.lawId, anchor: n.anchor, at: n.updatedAt || 0,
       color: n.color || '', tags: n.tags || [],
       memo: [n.summary, n.memo].map(t => String(t || '').trim()).filter(Boolean).join('　'),
       phrase: '',
@@ -2600,6 +2600,7 @@ function allMarks() {
   for (const r of state.ranges.values()) {
     out.push({
       kind: isSlash(r) ? 'slash' : 'range', id: r.id, lawId: r.lawId, anchor: r.anchor,
+      at: r.updatedAt || 0,
       slash: SLASH_KINDS[r.kind] || '',
       color: r.color || '', tags: [],
       memo: String(r.memo || '').trim(),
@@ -3771,31 +3772,111 @@ function snippet(text, normAt, qlen) {
     + esc(text.slice(endRaw, e)) + (e < text.length ? '…' : '');
 }
 
-function showMarkResults(pred, title) {
-  const box = $('#find-results');
-  const hits = allMarks().filter(pred);
-  $('#find-count').textContent = `${title}　${hits.length}件`;
-  box.innerHTML = '';
-  for (const m of hits) {
-    const law = state.laws.find(l => l.lawId === m.lawId);
-    const idx = state.indexCache.get(m.lawId);
-    const entry = idx && idx.find(e => e.anchor === m.anchor);
-    const d = document.createElement('div');
-    d.className = 'r';
-    d.innerHTML = '<div class="sub">'
-      + (m.color ? `<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--mk-${m.color});vertical-align:-1px;margin-right:6px"></span>` : '')
-      + `${esc(law ? law.lawTitle : m.lawId)}　${esc(anchorLabel(m.anchor))}`
-      + (m.kind === 'range' ? '　<span style="color:var(--fg-faint)">文言</span>' : '')
-      + (m.kind === 'slash' ? `　<span style="color:var(--ink);font-weight:700">${esc(m.slash)}</span>` : '')
-      + '</div>'
-      // 文言に付けたものは、その文言そのものを出す。条文の頭だけでは見分けられない。
-      + (m.phrase ? `<div class="snippet">「${esc(m.phrase.slice(0, 60))}」</div>`
-        : entry ? `<div class="snippet">${esc(entry.text.slice(0, 110))}</div>` : '')
-      + (m.memo ? `<div class="snippet" style="color:var(--fg-dim)">📝 ${esc(m.memo.slice(0, 80))}</div>` : '');
-    d.onclick = () => { $('#dlg-find').close(); navigate(m.lawId, m.anchor); };
-    box.appendChild(d);
+
+/*
+ * アンカーを条文の並び順で比べるための鍵。
+ *
+ * 文字列のままだと「第10条」が「第2条」より前に来る。本則・附則・別表の
+ * 別も文字列順では出ない。数として比べられる形に直す。
+ */
+function anchorSortKey(anchor) {
+  const p = String(anchor).split('/');
+  const scope = p[0] || '';
+  let rank;
+  if (scope === 'M') rank = 0;
+  else if (/^S(\d+)$/.test(scope)) rank = 1000 + Number(RegExp.$1);
+  else if (/^AP(\d+)$/.test(scope)) rank = 2000 + Number(RegExp.$1);
+  else rank = 3000;
+
+  // 前文は本則の先頭より前
+  if (p[1] === '前文') return [rank, -1, 0, 0, 0];
+
+  // 無い段は 0。条は、その条の項より前に来る。
+  const num = t => {
+    if (t === undefined || t === '') return [0, 0];
+    const m = String(t).match(/^(\d+)(?:[_:](\d+))?/);
+    return m ? [Number(m[1]), Number(m[2] || 0)] : [Infinity, 0];
+  };
+  const [art, branch] = num(p[1]);
+  const [par] = num(p[2]);
+  const [item] = num(p[3]);
+  return [rank, art, branch, par, item];
+}
+
+function cmpKey(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
   }
+  return 0;
+}
+
+let markView = null;      // いま出している一覧（並べ替えで作り直すため）
+
+function showMarkResults(pred, title) {
+  markView = { pred, title };
+  renderMarkResults();
   $('#dlg-find').showModal();
+}
+
+/*
+ * 法令ごとにまとめて出す。
+ *
+ * 印が増えると、一列に並べただけでは何がどこにあるのか分からない。
+ * 法令の並びは、法令タブで自分が並べた順に合わせる。
+ */
+function renderMarkResults() {
+  if (!markView) return;
+  const box = $('#find-results');
+  const hits = allMarks().filter(markView.pred);
+  $('#find-count').textContent = `${markView.title}　${hits.length}件`;
+
+  const sortBtn = $('#mark-sort');
+  sortBtn.hidden = hits.length < 2;
+  const order = ($('#mark-sort button.on') || {}).dataset
+    ? $('#mark-sort button.on').dataset.sort : 'doc';
+
+  const byLaw = new Map();
+  for (const m of hits) {
+    if (!byLaw.has(m.lawId)) byLaw.set(m.lawId, []);
+    byLaw.get(m.lawId).push(m);
+  }
+  // 法令タブで並べた順に合わせる。知らないものは後ろ。
+  const rank = new Map(state.laws.map((l, i) => [l.lawId, i]));
+  const laws = [...byLaw.keys()].sort((a, b) =>
+    (rank.has(a) ? rank.get(a) : Infinity) - (rank.has(b) ? rank.get(b) : Infinity));
+
+  box.innerHTML = '';
+  for (const lawId of laws) {
+    const list = byLaw.get(lawId);
+    list.sort((a, b) => order === 'time'
+      ? (b.at || 0) - (a.at || 0)
+      : cmpKey(anchorSortKey(a.anchor), anchorSortKey(b.anchor)));
+
+    const law = state.laws.find(l => l.lawId === lawId);
+    const head = document.createElement('div');
+    head.className = 'law-head';
+    head.innerHTML = `${esc(law ? law.lawTitle : lawId)}<span class="n">${list.length}件</span>`;
+    box.appendChild(head);
+
+    const idx = state.indexCache.get(lawId);
+    for (const m of list) {
+      const entry = idx && idx.find(e => e.anchor === m.anchor);
+      const d = document.createElement('div');
+      d.className = 'r';
+      d.innerHTML = '<div class="sub">'
+        + (m.color ? `<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--mk-${m.color});vertical-align:-1px;margin-right:6px"></span>` : '')
+        + esc(anchorLabel(m.anchor))
+        + (m.kind === 'range' ? '　<span style="color:var(--fg-faint)">文言</span>' : '')
+        + (m.kind === 'slash' ? `　<span style="color:var(--ink);font-weight:700">${esc(m.slash)}</span>` : '')
+        + '</div>'
+        // 文言に付けたものは、その文言そのものを出す。条文の頭だけでは見分けられない。
+        + (m.phrase ? `<div class="snippet">「${esc(m.phrase.slice(0, 60))}」</div>`
+          : entry ? `<div class="snippet">${esc(entry.text.slice(0, 110))}</div>` : '')
+        + (m.memo ? `<div class="snippet" style="color:var(--fg-dim)">📝 ${esc(m.memo.slice(0, 80))}</div>` : '');
+      d.onclick = () => { $('#dlg-find').close(); navigate(m.lawId, m.anchor); };
+      box.appendChild(d);
+    }
+  }
 }
 
 /* -------------------------------------------------------- 書き出しと復元 */
@@ -4079,6 +4160,13 @@ function wire() {
   $('#law-filter').oninput = renderLawList;
 
   for (const b of $$('.tabs button')) b.onclick = () => switchTab(b.dataset.tab);
+
+  $('#mark-sort').addEventListener('click', e => {
+    const b = e.target.closest('button[data-sort]');
+    if (!b) return;
+    for (const x of $$('#mark-sort button')) x.classList.toggle('on', x === b);
+    renderMarkResults();
+  });
 
   $('#find-where').addEventListener('click', e => {
     const b = e.target.closest('button[data-where]');

@@ -318,6 +318,10 @@
 <dialog id="dlg-find">
   <form method="dialog" class="dlg-form">
     <h2>検索結果 <span id="find-count" class="count"></span></h2>
+    <div class="seg" id="mark-sort" hidden>
+      <button type="button" data-sort="doc" class="on">条文順</button>
+      <button type="button" data-sort="time">新しい順</button>
+    </div>
     <div id="find-results" class="find-results"></div>
     <menu class="dlg-actions"><button value="close">閉じる</button></menu>
   </form>

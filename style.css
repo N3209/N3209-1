@@ -1007,6 +1007,20 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   border-radius: 8px; padding: 6px 16px; cursor: pointer; font: inherit; font-size: 13px;
 }
 
+/* 法令ごとの見出し。数が増えると、一列では何がどこにあるか分からない。 */
+.find-results .law-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-elev);
+  font-family: var(--font-ui); font-size: 11.5px; font-weight: 700;
+  color: var(--fg-dim); letter-spacing: .04em;
+  padding: 7px 2px 5px; border-bottom: 1px solid var(--line); margin-bottom: 6px;
+}
+.find-results .law-head:not(:first-child) { margin-top: 12px; }
+.find-results .law-head .n { float: right; font-weight: normal; color: var(--fg-faint); }
+
+#mark-sort { margin: 0 0 10px; }
+#mark-sort[hidden] { display: none; }
+
 .add-results, .find-results { max-height: 52vh; overflow-y: auto; }
 .add-results .r, .find-results .r {
   display: flex; align-items: center; gap: 10px;
