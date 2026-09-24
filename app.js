@@ -1112,6 +1112,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   pane.header.hidden = false;
   pane.el.innerHTML = html;
   syncTopbarLaw();
+  syncFindPlaceholder();
   indexAnchorEls(pane);
 
   renderLawList();
@@ -1349,6 +1350,7 @@ function setActivePane(idx) {
   state.active = idx;
   for (const p of state.panes) p.root.classList.toggle('active', p.idx === idx);
   syncTopbarLaw();
+  syncFindPlaceholder();
   renderLawList();
   renderToc();
   // 「この法令」の指す先が変わるので、結果を出し直す。
@@ -3439,6 +3441,26 @@ const find = {
   q: '', where: 'law', inText: true, inNotes: true,
   results: [], at: -1, truncated: false, scopeLawId: null,
 };
+
+/*
+ * 検索欄そのものに、何を対象にしているかを出す。
+ *
+ * 2面にしていると「どちらの法令を検索するのか」が欄からは分からなかった。
+ * 欄を面ごとに2つ置くと、結果の一覧の置き場所が無くなる（左ペインは1つしか
+ * ない）。欄は1つのまま、対象を欄に書く。面を切り替えれば文言も変わる。
+ */
+function syncFindPlaceholder() {
+  const el = $('#find-input');
+  if (!el) return;
+  if (find.where === 'all') {
+    el.placeholder = `全法令（${state.laws.length}件）を検索`;
+    return;
+  }
+  const t = P().current && P().current.lawTitle;
+  if (!t) { el.placeholder = '本文・メモを検索'; return; }
+  // 長い法令名は詰める。欄からあふれると、かえって読めない。
+  el.placeholder = (t.length > 12 ? t.slice(0, 12) + '…' : t) + 'を検索';
+}
 let findToken = 0;      // 検索が重なったとき、古い実行の結果を捨てるための印
 
 async function doFind() {
@@ -3954,6 +3976,7 @@ function wire() {
     if (!b) return;
     find.where = b.dataset.where;
     for (const x of $$('#find-where button')) x.classList.toggle('on', x === b);
+    syncFindPlaceholder();
     doFind();
   });
   $('#find-in-text').onchange = e => { find.inText = e.target.checked; doFind(); };
@@ -4260,6 +4283,7 @@ function registerServiceWorker() {
   let tab = 'laws';
   try { tab = localStorage.getItem('roppo.tab') || 'laws'; } catch (e) { /* 任意 */ }
   switchTab(tab);
+  syncFindPlaceholder();
   let sheetTab = 'jump';
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
