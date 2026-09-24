@@ -1713,13 +1713,14 @@ function placeControls() {
     if ($('#tab-find').classList.contains('on')) switchTab('laws');
   } else {
     if (jump.parentElement !== $('.topbar')) {
-      // 上段の並びは ← → / 番号 / 検索 / 2面 / 表示 の順に戻す
+      // 上段の並びは ← → / 番号 / 2面 / 表示 の順に戻す
       $('.topbar').insertBefore(jump, $('#btn-split'));
-      $('.topbar').insertBefore(find, $('#btn-split'));
       $('.topbar').insertBefore(nav, jump);
       $('.topbar').appendChild(view);
       $('#pane-laws').insertBefore(panel, $('#panel-marks'));
     }
+    // ことばの欄は、結果と同じ場所（検索タブの中）に置く
+    if (find.parentElement !== panel) panel.insertBefore(find, panel.firstChild);
     input.inputMode = 'numeric';
     try { pad.hidden = localStorage.getItem('roppo.pad') !== '1'; } catch (e) { pad.hidden = true; }
     $('#tab-find').hidden = false;
@@ -4209,6 +4210,7 @@ function wireGlobal() {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       if (narrow()) { setSheet(true, 'find'); return; }
+      switchTab('find');          // 欄は検索タブの中にある
       $('#find-input').select();
     }
     if (e.key === 'F3') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }

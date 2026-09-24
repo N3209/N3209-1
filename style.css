@@ -222,26 +222,27 @@ button, .tabs button, .law-name, .article-title, .article-caption,
 .jump .go:hover { filter: brightness(1.08); }
 
 /*
- * 条文番号の欄とことばの欄が隣り合うので、見た目で分ける。
- * 以前は2つの欄のあいだに「引く」ボタンがあり、どちらの欄のものか
- * 分からなかった。ボタンをやめ、仕切りと虫眼鏡で役割を示す。
+ * ことばの欄は、結果と同じ場所に置く。
+ *
+ * 以前は上段にあり、一番使わないのに一番広く場所を取っていた。
+ * 範囲切替・対象切替・結果の一覧は検索タブにあるのに、入力欄だけが
+ * 離れていた。スマホのシートでは元から一まとまりなので、そちらに揃える。
  */
-.find {
-  flex: 1; min-width: 90px; position: relative;
-  padding-left: 11px; margin-left: 4px;
-  border-left: 1px solid var(--line);
-}
+.find { position: relative; margin-bottom: 8px; }
 .find::before {
   content: "⌕";
-  position: absolute; left: 19px; top: 50%; transform: translateY(-52%);
+  position: absolute; left: 9px; top: 50%; transform: translateY(-52%);
   color: var(--fg-faint); font-size: 16px; pointer-events: none;
 }
-.find input { width: 100%; padding-left: 26px; }
+.find input {
+  width: 100%; height: 32px; padding: 0 10px 0 26px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 13px;
+}
+.find input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
-/* シートの中では隣り合わないので、仕切りも虫眼鏡も要らない */
-.sheet-pane .find { padding-left: 0; margin-left: 0; border-left: none; }
-.sheet-pane .find::before { display: none; }
-.sheet-pane .find input { padding-left: 12px; }
+/* シートの中では下端に置く。キーボードの真上に来る。 */
+.sheet-pane .find { margin-bottom: 0; }
 
 .topbar input {
   height: 34px; border: 1px solid var(--line); border-radius: 8px;
@@ -484,10 +485,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* ことばで探す。結果が上、入力欄が下。キーボードの真上に来て親指が届く。 */
 .sheet-pane #panel-find { flex: 1; min-height: 0; overflow-y: auto; background: none; border: none; padding: 0; }
 .sheet-pane .find { flex: none; margin-top: 10px; }
-.sheet-pane .find input {
-  width: 100%; height: 40px; border: 1px solid var(--line); border-radius: 9px;
-  background: var(--bg); color: var(--fg); padding: 0 12px; font: inherit; font-size: 15px;
-}
+.sheet-pane .find input { height: 40px; font-size: 15px; }
 
 .tab-body { flex: 1; overflow-y: auto; background: var(--bg-elev); border-top: 1px solid var(--line); padding: 10px; }
 

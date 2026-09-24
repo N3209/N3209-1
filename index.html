@@ -49,11 +49,6 @@
     </div>
   </div>
 
-  <div class="find">
-    <input id="find-input" type="search" autocomplete="off"
-           placeholder="本文・メモを検索" aria-label="全文検索">
-  </div>
-
   <button id="btn-split" class="icon-btn" aria-label="2面に分ける" title="2面に分ける">⫿⫿</button>
 
   <div class="view">
@@ -139,6 +134,10 @@
     </div>
 
     <div class="tab-body" id="panel-find" hidden>
+      <div class="find">
+        <input id="find-input" type="search" autocomplete="off"
+               placeholder="本文・メモを検索" aria-label="全文検索">
+      </div>
       <div class="find-scope">
         <div class="seg" id="find-where">
           <button type="button" data-where="law" class="on">この法令</button>
