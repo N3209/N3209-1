@@ -258,6 +258,8 @@ button, .tabs button, .law-name, .article-title, .article-caption,
   position: absolute; top: 40px; right: 0; z-index: 40; width: 236px;
   background: var(--bg-elev); border: 1px solid var(--line);
   border-radius: 12px; box-shadow: var(--shadow); padding: 12px 13px 13px;
+  /* 中身が増えて画面の外へはみ出していた。入りきらなければ中で送る。 */
+  max-height: calc(100vh - 56px); overflow-y: auto; overscroll-behavior: contain;
 }
 .viewpad[hidden] { display: none; }
 .viewpad .note-label { margin: 0 0 6px; }
@@ -409,7 +411,10 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .bottombar .lookup.on { filter: brightness(.92); }
 /* 表示設定の札は、下段から出すので上へ開く */
-.bottombar .viewpad { top: auto; bottom: 46px; }
+.bottombar .viewpad {
+  top: auto; bottom: 46px;
+  max-height: calc(100vh - 110px);      /* 下段のぶんも空ける */
+}
 
 /* 下から出るシート。条文を隠しきらないよう、下半分までに収める。
    幅は盤に合わせて詰める。盤だけ右に寄って左が空くより、まとまって見える。
