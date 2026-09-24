@@ -1034,6 +1034,15 @@ function wireLawDrag() {
   const rowsBelow = y => [...ul.querySelectorAll('li[data-law-id]')]
     .find(el => el !== dragRow && y < el.getBoundingClientRect().top + el.offsetHeight / 2);
 
+  /*
+   * iOS は touchstart の既定動作でスクロールと長押しを始める。
+   * pointerdown の preventDefault だけでは引き下がらないことがあるので、
+   * 取っ手の上では touchstart そのものを止める。
+   */
+  ul.addEventListener('touchstart', e => {
+    if (e.target.closest && e.target.closest('.grip')) e.preventDefault();
+  }, { passive: false });
+
   ul.addEventListener('pointerdown', e => {
     const grip = e.target.closest('.grip');
     if (!grip) return;

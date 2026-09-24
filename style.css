@@ -519,10 +519,19 @@ body.resizing { cursor: col-resize; user-select: none; }
 .law-list .law-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* つまんで動かすための取っ手。押す先を分けておくと、
    開く・削除とぶつからない。 */
+/*
+ * iOS は長押しで選択ルーペとメニューを出す。これが並べ替えの指の動きを
+ * 横取りしてしまうので、一覧の中では止める。本文の選択には影響しない。
+ */
+.law-list {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
 .law-list .grip {
   flex: none; width: 18px; text-align: center; cursor: grab;
   color: var(--fg-faint); font-size: 12px; line-height: 1;
   touch-action: none;                 /* つまんでいる間、画面を動かさない */
+  -webkit-touch-callout: none;
   opacity: 0;
 }
 .law-list li:hover .grip { opacity: 1; }
