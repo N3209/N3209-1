@@ -517,6 +517,20 @@ body.resizing { cursor: col-resize; user-select: none; }
 .law-list li:hover { background: var(--bg-hover); }
 .law-list li.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .law-list .law-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* つまんで動かすための取っ手。押す先を分けておくと、
+   開く・削除とぶつからない。 */
+.law-list .grip {
+  flex: none; width: 16px; text-align: center; cursor: grab;
+  color: var(--fg-faint); font-size: 12px; line-height: 1;
+  touch-action: none;                 /* つまんでいる間、画面を動かさない */
+  opacity: 0;
+}
+.law-list li:hover .grip { opacity: 1; }
+.law-list li.dragging { background: var(--accent-bg); opacity: .85; }
+.law-list li.dragging .grip { cursor: grabbing; opacity: 1; }
+/* 指では常に出す。触れてみないと取っ手があると分からない。 */
+@media (hover: none) { .law-list .grip { opacity: .5; } }
+
 .law-list .del { border: none; background: none; color: var(--fg-faint); cursor: pointer; font-size: 15px; padding: 0 2px; opacity: 0; }
 .law-list li:hover .del { opacity: 1; }
 .law-list .del:hover { color: #c0392b; }

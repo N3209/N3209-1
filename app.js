@@ -1000,10 +1000,95 @@ function flushSave() {
 
 /* --------------------------------------------------------------- 法令一覧 */
 
+
+/*
+ * つまんで並べ替える。
+ *
+ * ブラウザの drag-and-drop は iOS の Safari で動かないので使わない。
+ * pointer の事象だけで組む。指でもマウスでも同じ道を通る。
+ *
+ * 取っ手（⠿）からしか始まらない。行そのものをつまめるようにすると、
+ * 読むために押したつもりが動いてしまう。
+ */
+function wireLawDrag() {
+  const ul = $('#law-list');
+  let li = null, ph = null;
+
+  const rowsBelow = y => [...ul.querySelectorAll('li[data-law-id]')]
+    .find(el => el !== li && y < el.getBoundingClientRect().top + el.offsetHeight / 2);
+
+  ul.addEventListener('pointerdown', e => {
+    const grip = e.target.closest('.grip');
+    if (!grip) return;
+    // 絞り込み中は並びが一部しか出ていない。動かすと全体の順が壊れる。
+    if ($('#law-filter').value.trim()) { toast('絞り込みを消してから並べ替えてください'); return; }
+
+    li = grip.closest('li[data-law-id]');
+    if (!li) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    li.classList.add('dragging');
+    ph = li;                       // 実物をそのまま動かす。影は作らない
+  });
+
+  ul.addEventListener('pointermove', e => {
+    if (!li) return;
+    e.preventDefault();
+    const before = rowsBelow(e.clientY);
+    if (before) ul.insertBefore(li, before);
+    else ul.appendChild(li);
+  });
+
+  const finish = () => {
+    if (!li) return;
+    li.classList.remove('dragging');
+    li = ph = null;
+    // 画面の並びを、そのまま順として覚える
+    const shown = [...ul.querySelectorAll('li[data-law-id]')].map(el => el.dataset.lawId);
+    // 絞り込みで隠れているものは、いまの順のまま後ろに残す
+    const rest = state.laws.map(l => l.lawId).filter(id => !shown.includes(id));
+    saveLawOrder(shown.concat(rest));
+    state.laws = sortLaws(state.laws);
+    renderLawList();
+  };
+  ul.addEventListener('pointerup', finish);
+  ul.addEventListener('pointercancel', finish);
+}
+
+/*
+ * 法令の並び順。
+ *
+ * 既定は名前順だが、よく引くものを上に置きたい。順番は法令そのものでは
+ * なく「並べ方」なので、XML を抱えた記録は書き換えず、別に持つ。
+ * 1.6MB の XML を並べ替えのたびに書き直すのは無駄でもある。
+ */
+const LAW_ORDER_KEY = 'roppo.lawOrder';
+let lawOrder = [];
+
+function loadLawOrder() {
+  try { lawOrder = JSON.parse(localStorage.getItem(LAW_ORDER_KEY) || '[]'); }
+  catch (e) { lawOrder = []; }
+  if (!Array.isArray(lawOrder)) lawOrder = [];
+}
+
+function saveLawOrder(ids) {
+  lawOrder = ids;
+  try { localStorage.setItem(LAW_ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* 任意 */ }
+}
+
+/* 覚えた順を先に、知らないものは名前順で後ろに。 */
+function sortLaws(list) {
+  const at = new Map(lawOrder.map((id, i) => [id, i]));
+  return list.slice().sort((a, b) => {
+    const ia = at.has(a.lawId) ? at.get(a.lawId) : Infinity;
+    const ib = at.has(b.lawId) ? at.get(b.lawId) : Infinity;
+    if (ia !== ib) return ia - ib;
+    return (a.lawTitle || '').localeCompare(b.lawTitle || '', 'ja');
+  });
+}
+
 async function refreshLawList() {
-  state.laws = (await store.allLaws())
-    .map(({ xml, ...meta }) => meta)
-    .sort((a, b) => (a.lawTitle || '').localeCompare(b.lawTitle || '', 'ja'));
+  state.laws = sortLaws((await store.allLaws()).map(({ xml, ...meta }) => meta));
   renderLawList();
 }
 
@@ -1024,7 +1109,9 @@ function renderLawList() {
     const li = document.createElement('li');
     li.className = P().current && P().current.lawId === l.lawId ? 'active' : '';
     const a = amendOf(l);
-    li.innerHTML = `<span class="law-name" title="${esc(l.lawTitle)}">${esc(l.lawTitle)}</span>`
+    li.dataset.lawId = l.lawId;
+    li.innerHTML = '<span class="grip" title="つまんで並べ替え">⠿</span>'
+      + `<span class="law-name" title="${esc(l.lawTitle)}">${esc(l.lawTitle)}</span>`
       + (l.source === 'file' ? '<span class="src-badge">取り込み</span>' : '')
       + (isUnenforced(l) ? '<span class="rev-badge">未施行</span>' : '')
       + (a ? `<span class="amend-dot ${a.kind === 'upcoming' ? 'upcoming' : ''}" title="${esc(amendTitle(a))}　押すと版を選べます"></span>` : '')
@@ -3741,6 +3828,7 @@ async function exportBackup() {
     laws,                 // xml を無加工のまま含む
     notes,                // 条・項・号への注釈
     ranges,               // 文言への注釈
+    lawOrder,             // 自分で並べた順。端末を変えても残したい
   };
   download(`roppo-backup-${stamp()}.json`, JSON.stringify(data), 'application/json');
   toast(`法令 ${laws.length}件 / 注釈 ${notes.length + ranges.length}件 を書き出しました`);
@@ -3770,6 +3858,7 @@ async function importBackup(file) {
     await store.putNote(n);
     addedNotes++;
   }
+  if (Array.isArray(data.lawOrder) && data.lawOrder.length) saveLawOrder(data.lawOrder);
   for (const r of data.ranges || []) {
     if (!r.id) continue;
     const cur = state.ranges.get(r.id);
@@ -4002,6 +4091,7 @@ function wire() {
   $('#find-in-text').onchange = e => { find.inText = e.target.checked; doFind(); };
   $('#find-in-notes').onchange = e => { find.inNotes = e.target.checked; doFind(); };
   wireKeypad();
+  wireLawDrag();
   wireView();
 
   const openAdd = () => { $('#dlg-add').showModal(); $('#add-query').focus(); };
@@ -4309,6 +4399,7 @@ function registerServiceWorker() {
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
   placeControls();
+  loadLawOrder();
   loadAmendState();
   await loadNotes();
   await loadRanges();
