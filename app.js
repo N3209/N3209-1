@@ -2910,6 +2910,20 @@ function sentenceEndNear(x, y) {
   return { anchor: el.dataset.anchor, text, nth, at: best + 1 };
 }
 
+/*
+ * その場所にすでに区切りが付いているか。
+ *
+ * 印は幅ゼロなので、指で直接押すことはできない。「。」を押したときに、
+ * 同じ場所の印を探して、種類の変更と削除の入口にする。
+ */
+function existingSlash(lawId, anchor, text, nth) {
+  for (const r of state.ranges.values()) {
+    if (!isSlash(r)) continue;
+    if (r.lawId === lawId && r.anchor === anchor && r.text === text && (r.nth || 1) === nth) return r;
+  }
+  return null;
+}
+
 let slashPending = null;      // これから付ける位置、または付いている印
 
 function showSlashBar(atRect, current) {
@@ -4022,14 +4036,16 @@ function bindPaneEvents(pane) {
      */
     const near = sentenceEndNear(e.clientX, e.clientY);
     if (near) {
-      slashPending = near;
+      // すでに印が付いていれば、その印の編集として開く
+      const cur = P().current && existingSlash(P().current.lawId, near.anchor, near.text, near.nth);
+      slashPending = cur ? { id: cur.id } : near;
       const r = document.createRange();
       const map = textMapOf(findAnchorEl(near.anchor, pane) || pane.el);
       const seg = map.nodes.find(x => near.at >= x.start && near.at <= x.end);
       if (seg) {
         r.setStart(seg.node, Math.max(0, near.at - seg.start - 1));
         r.setEnd(seg.node, Math.min(seg.node.nodeValue.length, near.at - seg.start));
-        showSlashBar(r.getBoundingClientRect(), null);
+        showSlashBar(r.getBoundingClientRect(), cur);
         return;
       }
     }

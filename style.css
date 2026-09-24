@@ -794,7 +794,7 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
 }
 .slash::after {
   content: "/";
-  position: absolute; left: -0.32em; top: 0;
+  position: absolute; left: -0.32em; top: .08em;
   line-height: 1; font-size: 1em; font-weight: 700;
   color: var(--ink); pointer-events: none;
 }
