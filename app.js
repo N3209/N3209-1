@@ -1010,12 +1010,27 @@ function flushSave() {
  * 取っ手（⠿）からしか始まらない。行そのものをつまめるようにすると、
  * 読むために押したつもりが動いてしまう。
  */
+let dragRow = null;        // つまんでいる行
+let dragPointer = null;    // つまんでいる指（マウス）
+
+/*
+ * つまむのをやめる。覚えた順は書かない。
+ * 一覧を作り直すときは、必ずこれを先に呼ぶ。作り直すと、つまんでいた行は
+ * 画面から外れるが、こちらは古い要素を握ったままになる。次に指が動くと、
+ * 外れたはずの行を一覧へ挿し直して、同じ法令が二重に並ぶ。
+ */
+function cancelLawDrag() {
+  if (!dragRow) return;
+  dragRow.classList.remove('dragging');
+  dragRow = null;
+  dragPointer = null;
+}
+
 function wireLawDrag() {
   const ul = $('#law-list');
-  let li = null, ph = null;
 
   const rowsBelow = y => [...ul.querySelectorAll('li[data-law-id]')]
-    .find(el => el !== li && y < el.getBoundingClientRect().top + el.offsetHeight / 2);
+    .find(el => el !== dragRow && y < el.getBoundingClientRect().top + el.offsetHeight / 2);
 
   ul.addEventListener('pointerdown', e => {
     const grip = e.target.closest('.grip');
@@ -1023,36 +1038,45 @@ function wireLawDrag() {
     // 絞り込み中は並びが一部しか出ていない。動かすと全体の順が壊れる。
     if ($('#law-filter').value.trim()) { toast('絞り込みを消してから並べ替えてください'); return; }
 
-    li = grip.closest('li[data-law-id]');
-    if (!li) return;
+    const row = grip.closest('li[data-law-id]');
+    if (!row) return;
     e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
-    li.classList.add('dragging');
-    ph = li;                       // 実物をそのまま動かす。影は作らない
+    cancelLawDrag();
+    try { grip.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動く */ }
+    dragRow = row;
+    dragPointer = e.pointerId;
+    row.classList.add('dragging');
   });
 
   ul.addEventListener('pointermove', e => {
-    if (!li) return;
+    if (!dragRow || e.pointerId !== dragPointer) return;
+    // 一覧が作り直されて、握っている行が画面から外れていたらやめる
+    if (!dragRow.isConnected) { cancelLawDrag(); return; }
     e.preventDefault();
     const before = rowsBelow(e.clientY);
-    if (before) ul.insertBefore(li, before);
-    else ul.appendChild(li);
+    if (before) ul.insertBefore(dragRow, before);
+    else ul.appendChild(dragRow);
   });
 
-  const finish = () => {
-    if (!li) return;
-    li.classList.remove('dragging');
-    li = ph = null;
+  const finish = e => {
+    if (!dragRow || (e && e.pointerId !== dragPointer)) return;
+    const ok = dragRow.isConnected;
+    cancelLawDrag();
+    if (!ok) return;                 // 外れていたら、順は書かない
+
     // 画面の並びを、そのまま順として覚える
     const shown = [...ul.querySelectorAll('li[data-law-id]')].map(el => el.dataset.lawId);
+    const seen = new Set();
+    const uniq = shown.filter(id => !seen.has(id) && seen.add(id));
     // 絞り込みで隠れているものは、いまの順のまま後ろに残す
-    const rest = state.laws.map(l => l.lawId).filter(id => !shown.includes(id));
-    saveLawOrder(shown.concat(rest));
+    const rest = state.laws.map(l => l.lawId).filter(id => !seen.has(id));
+    saveLawOrder(uniq.concat(rest));
     state.laws = sortLaws(state.laws);
     renderLawList();
   };
   ul.addEventListener('pointerup', finish);
   ul.addEventListener('pointercancel', finish);
+  ul.addEventListener('lostpointercapture', finish);
 }
 
 /*
@@ -1093,6 +1117,7 @@ async function refreshLawList() {
 }
 
 function renderLawList() {
+  cancelLawDrag();          // 作り直すと、つまんでいた行は画面から外れる
   const kw = normalize($('#law-filter').value || '');
   const ul = $('#law-list');
   ul.innerHTML = '';
@@ -1209,6 +1234,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   paintNotesIn(pane);
   paintRangesIn(pane);
   closePopover();                        // 前の法令の注釈パネルは閉じる
+  hideSlashBar();                        // 別の法令に印を付けてしまわないように
   // 絞り込みは法令をまたいでも保つ。同じタグを別の法令で続けて見たいため。
   applyFilter(pane);
   renderFilterPicker();
@@ -1246,18 +1272,26 @@ function lawByName(name) {
   // 別の版として取り込んだものは、名前で引く対象にしない。
   // 本文に「民法」と書いてあるリンクが未施行の版へ飛んだら、取り違えに気づけない。
   const pool = state.laws.filter(l => !l.revisionOf);
-  const exact = pool.find(l => l.lawTitle === name || l.abbrev === name);
-  if (exact) return exact;
-  let best = null;
+  /*
+   * 同じ名前の法令が複数あるとき（e-Gov から取ったものと、ファイルから
+   * 取り込んだもの）、先に並んでいる方を選ぶと、一覧の並べ替えだけで
+   * リンクの行き先が変わる。決め手が無いならリンクを張らない。
+   */
+  const exact = pool.filter(l => l.lawTitle === name || l.abbrev === name);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  let best = null, ties = 1;
   for (const l of pool) {
     if (!l.lawTitle || !name.endsWith(l.lawTitle)) continue;
     const before = name.slice(0, name.length - l.lawTitle.length);
     // 「地方法人税法」を「法人税法」と取り違えないよう、直前が漢字・カタカナなら採らない。
     // 「において準用する商業登記法」のように、ひらがなや記号で切れている場合だけ許す。
     if (before && /[一-鿿゠-ヿ]$/.test(before)) continue;
-    if (!best || l.lawTitle.length > best.lawTitle.length) best = l;
+    if (!best) { best = l; continue; }
+    if (l.lawTitle.length > best.lawTitle.length) { best = l; ties = 1; continue; }
+    if (l.lawTitle.length === best.lawTitle.length) ties++;
   }
-  return best;
+  return ties > 1 ? null : best;     // 同じ長さで並ぶなら決め手が無い
 }
 
 /** 参照に書かれた法令名のうち、実際の法令名にあたる部分だけを返す */
@@ -1437,6 +1471,7 @@ function setActivePane(idx) {
   if (!state.split) idx = 0;
   state.active = idx;
   for (const p of state.panes) p.root.classList.toggle('active', p.idx === idx);
+  hideSlashBar();
   syncTopbarLaw();
   syncFindPlaceholder();
   renderLawList();
@@ -2257,7 +2292,18 @@ async function importLawFile(file) {
     savedAt: Date.now(),
   };
   await store.putLaw(rec);
+  /*
+   * 同じ名前で取り込み直したとき、lawId が同じなので navigate は
+   * 開き直さない。DBだけ新しくなって画面は古いまま、という状態になる。
+   * 「取り込みました」と出るので、新しい本文だと思い込む。
+   */
+  state.indexCache.delete(rec.lawId);
   await refreshLawList();
+  for (const pane of livePanes()) {
+    if (pane.current && pane.current.lawId === rec.lawId) {
+      await openLaw(rec.lawId, null, 0, pane);
+    }
+  }
   await navigate(rec.lawId);
 
   const parts = ['「' + lawTitle + '」を取り込みました'];
@@ -2999,7 +3045,13 @@ function sentenceEndNear(x, y) {
   for (let i = 0; i + text.length <= best + 1; i++) {
     if (map.text.startsWith(text, i)) nth++;
   }
-  return { anchor: el.dataset.anchor, text, nth, at: best + 1 };
+  // どの法令のどの面で押したかを一緒に持つ。バーを開いたまま別の法令へ
+  // 移って押すと、この文言を別の法令に付けてしまう。
+  const pane = P();
+  return {
+    anchor: el.dataset.anchor, text, nth, at: best + 1,
+    lawId: pane.current && pane.current.lawId, paneIdx: pane.idx,
+  };
 }
 
 /*
@@ -3042,6 +3094,9 @@ async function applySlash(kind) {
   const p = slashPending;
   hideSlashBar();
   if (!p || !P().current) return;
+
+  // 開いたときと同じ法令・同じ面でなければ、何もしない。
+  if (p.lawId && (p.lawId !== P().current.lawId || p.paneIdx !== P().idx)) return;
 
   if (p.id) {                                   // すでに付いている印を押した
     if (kind === 'none') { await deleteRange(p.id); return; }
@@ -3791,16 +3846,22 @@ function anchorSortKey(anchor) {
   // 前文は本則の先頭より前
   if (p[1] === '前文') return [rank, -1, 0, 0, 0];
 
-  // 無い段は 0。条は、その条の項より前に来る。
+  /*
+   * 枝番は何段にもなる。労働基準法に「第三十二条の三の二」（32_3_2）が実在する。
+   * 1段しか読まないと、32_3_2 が 32_3 の項より前に来てしまう。
+   * 段の数をそろえるため、足りない分は 0 で埋める。
+   */
+  const DEPTH = 3;
   const num = t => {
-    if (t === undefined || t === '') return [0, 0];
-    const m = String(t).match(/^(\d+)(?:[_:](\d+))?/);
-    return m ? [Number(m[1]), Number(m[2] || 0)] : [Infinity, 0];
+    if (t === undefined || t === '') return new Array(DEPTH).fill(0);
+    const parts = String(t).split(/[_:]/).map(x => {
+      const m = String(x).match(/^(\d+)/);
+      return m ? Number(m[1]) : Infinity;
+    });
+    while (parts.length < DEPTH) parts.push(0);
+    return parts.slice(0, DEPTH);
   };
-  const [art, branch] = num(p[1]);
-  const [par] = num(p[2]);
-  const [item] = num(p[3]);
-  return [rank, art, branch, par, item];
+  return [rank].concat(num(p[1]), num(p[2]), num(p[3]));
 }
 
 function cmpKey(a, b) {
@@ -4258,7 +4319,9 @@ function bindPaneEvents(pane) {
     if (near) {
       // すでに印が付いていれば、その印の編集として開く
       const cur = P().current && existingSlash(P().current.lawId, near.anchor, near.text, near.nth);
-      slashPending = cur ? { id: cur.id } : near;
+      slashPending = cur
+        ? { id: cur.id, lawId: P().current.lawId, paneIdx: P().idx }
+        : near;
       const r = document.createRange();
       const map = textMapOf(findAnchorEl(near.anchor, pane) || pane.el);
       const seg = map.nodes.find(x => near.at >= x.start && near.at <= x.end);
