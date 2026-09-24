@@ -801,7 +801,7 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
  */
 .slash::after, .slash.dslash::before {
   content: "";
-  position: absolute; top: .08em; width: .3em; height: .84em;
+  position: absolute; top: .08em; width: .3em; height: .92em;
   /* 線は勾配の向きと直交する。/ を引くには、勾配を右下へ向ける。 */
   background: linear-gradient(to bottom right,
     transparent calc(50% - 1px), var(--ink) calc(50% - 1px),
