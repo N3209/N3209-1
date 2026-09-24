@@ -1022,6 +1022,8 @@ let dragPointer = null;    // つまんでいる指（マウス）
 function cancelLawDrag() {
   if (!dragRow) return;
   dragRow.classList.remove('dragging');
+  const ul = $('#law-list');
+  if (ul) ul.classList.remove('dragging');
   dragRow = null;
   dragPointer = null;
 }
@@ -1046,6 +1048,7 @@ function wireLawDrag() {
     dragRow = row;
     dragPointer = e.pointerId;
     row.classList.add('dragging');
+    ul.classList.add('dragging');      // 周りを薄くして、つまんだことを示す
   });
 
   ul.addEventListener('pointermove', e => {

@@ -520,16 +520,36 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* つまんで動かすための取っ手。押す先を分けておくと、
    開く・削除とぶつからない。 */
 .law-list .grip {
-  flex: none; width: 16px; text-align: center; cursor: grab;
+  flex: none; width: 18px; text-align: center; cursor: grab;
   color: var(--fg-faint); font-size: 12px; line-height: 1;
   touch-action: none;                 /* つまんでいる間、画面を動かさない */
   opacity: 0;
 }
 .law-list li:hover .grip { opacity: 1; }
-.law-list li.dragging { background: var(--accent-bg); opacity: .85; }
-.law-list li.dragging .grip { cursor: grabbing; opacity: 1; }
-/* 指では常に出す。触れてみないと取っ手があると分からない。 */
-@media (hover: none) { .law-list .grip { opacity: .5; } }
+
+/*
+ * つまんでいることを、周りの変化で伝える。
+ * つまんだ行そのものは指で隠れるので、そこだけ色を変えても見えない。
+ * 他の行を一斉に薄くすれば、指の下が見えなくても状態が分かる。
+ */
+.law-list.dragging li:not(.dragging) { opacity: .38; }
+.law-list li.dragging {
+  background: var(--bg-elev);
+  box-shadow: 0 3px 12px rgba(17, 20, 24, .22);
+  outline: 2px solid var(--accent); outline-offset: -1px;
+  position: relative; z-index: 2;
+}
+.law-list li.dragging .grip { cursor: grabbing; opacity: 1; color: var(--accent); }
+
+/* 指では取っ手を常に出し、当たりを広く取る。
+   16pxの的は指には小さく、外れても何も起きないので「反応しない」と感じる。 */
+@media (hover: none) {
+  .law-list .grip {
+    opacity: .55; width: 34px;
+    padding: 10px 0; margin: -10px 0;   /* 見た目は変えず、当たりだけ広げる */
+  }
+  .law-list li { padding: 10px 8px; }
+}
 
 .law-list .del { border: none; background: none; color: var(--fg-faint); cursor: pointer; font-size: 15px; padding: 0 2px; opacity: 0; }
 .law-list li:hover .del { opacity: 1; }
