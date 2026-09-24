@@ -127,7 +127,7 @@ function anchorLabel(anchor) {
 /* ------------------------------------------------------------ IndexedDB */
 
 const DB_NAME = 'roppo';
-const DB_VER = 2;
+const DB_VER = 3;
 let _db = null;
 
 function openDB() {
@@ -148,6 +148,30 @@ function openDB() {
       if (!db.objectStoreNames.contains('ranges')) {
         const s = db.createObjectStore('ranges', { keyPath: 'id' });
         s.createIndex('lawId', 'lawId', { unique: false });
+      }
+      /*
+       * v3: 法令の見出しだけを別に持つ。
+       *
+       * 一覧を作るために getAll('laws') を使っていたが、これは XML 込みで
+       * 全レコードを読む。名前を並べるためだけに、民法1.6MB・会社法2.2MB
+       * …と数MBを読み出して捨てていた。法令を足すほど起動が遅くなる。
+       * 見出しだけの小さな記録を別に置き、一覧はそちらを読む。
+       */
+      if (!db.objectStoreNames.contains('lawMeta')) {
+        db.createObjectStore('lawMeta', { keyPath: 'lawId' });
+        // すでにある法令から見出しを作る。ここは版を上げるときの1回だけ。
+        if (db.objectStoreNames.contains('laws') && req.transaction) {
+          const laws = req.transaction.objectStore('laws');
+          const meta = req.transaction.objectStore('lawMeta');
+          const cur = laws.openCursor();
+          cur.onsuccess = ev => {
+            const c = ev.target.result;
+            if (!c) return;
+            const { xml, ...rest } = c.value;
+            meta.put(rest);
+            c.continue();
+          };
+        }
       }
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -180,11 +204,33 @@ async function write(name, fn) {
   return val;
 }
 
+/*
+ * 法令の本体と見出しは、必ず一緒に書く。片方だけ残ると、一覧に出るのに
+ * 開けない、あるいはその逆になる。同じトランザクションで書く。
+ */
+async function putLawAndMeta(rec) {
+  const db = await openDB();
+  const t = db.transaction(['laws', 'lawMeta'], 'readwrite');
+  const { xml, ...meta } = rec;
+  t.objectStore('laws').put(rec);
+  t.objectStore('lawMeta').put(meta);
+  await txDone(t);
+}
+
+async function delLawAndMeta(id) {
+  const db = await openDB();
+  const t = db.transaction(['laws', 'lawMeta'], 'readwrite');
+  t.objectStore('laws').delete(id);
+  t.objectStore('lawMeta').delete(id);
+  await txDone(t);
+}
+
 const store = {
-  allLaws: () => read('laws', s => s.getAll()),
+  allLaws: () => read('laws', s => s.getAll()),      // XML 込み。書き出しでだけ使う
+  allLawMeta: () => read('lawMeta', s => s.getAll()),
   getLaw: id => read('laws', s => s.get(id)),
-  putLaw: rec => write('laws', s => s.put(rec)),
-  delLaw: id => write('laws', s => s.delete(id)),
+  putLaw: rec => putLawAndMeta(rec),
+  delLaw: id => delLawAndMeta(id),
   allNotes: () => read('notes', s => s.getAll()),
   putNote: rec => write('notes', s => s.put(rec)),
   delNote: key => write('notes', s => s.delete(key)),
@@ -1124,7 +1170,11 @@ function sortLaws(list) {
 }
 
 async function refreshLawList() {
-  state.laws = sortLaws((await store.allLaws()).map(({ xml, ...meta }) => meta));
+  /*
+   * 一覧は見出しだけを読む。XML 込みで全部読むと、法令を足すほど
+   * 起動が遅くなる（数MBの読み出しを、名前を並べるためだけに行う）。
+   */
+  state.laws = sortLaws(await store.allLawMeta());
   renderLawList();
 }
 
