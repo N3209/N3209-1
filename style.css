@@ -787,10 +787,11 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
  */
 .slash {
   position: relative;
-  display: inline-block; width: 0; height: 1em;
-  /* 上端を文字の上端にそろえる。ベースライン基準だと、書体や文字の
-     大きさを変えたときに高さがずれる。 */
-  vertical-align: text-top;
+  display: inline-block; width: 0; height: 0;
+  /* ベースライン（文字の下端）を基準にする。
+     「文字の上端」は書体が持つ余白のぶん実際の字より上にあり、
+     書体を変えると位置がずれる。ベースラインは書体によらず安定している。 */
+  vertical-align: baseline;
 }
 /*
  * 「/」の文字ではなく、線を自分で描く。
@@ -801,7 +802,8 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
  */
 .slash::after, .slash.dslash::before {
   content: "";
-  position: absolute; top: .08em; width: .3em; height: .92em;
+  /* bottom はベースラインからの位置。少し下へ出し、文字より気持ち長くする。 */
+  position: absolute; bottom: -.1em; width: .3em; height: 1.1em;
   /* 線は勾配の向きと直交する。/ を引くには、勾配を右下へ向ける。 */
   background: linear-gradient(to bottom right,
     transparent calc(50% - 1px), var(--ink) calc(50% - 1px),
