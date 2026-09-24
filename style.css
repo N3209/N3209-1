@@ -792,14 +792,25 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
      大きさを変えたときに高さがずれる。 */
   vertical-align: text-top;
 }
-.slash::after {
-  content: "/";
-  position: absolute; left: -0.32em; top: .08em;
-  line-height: 1; font-size: 1em; font-weight: 700;
-  color: var(--ink); pointer-events: none;
+/*
+ * 「/」の文字ではなく、線を自分で描く。
+ * 字形の「/」は書体ごとに長さも太さも違うので、文字の高さに合わせられない。
+ * 箱の角から角へ引けば、両端の位置を数字で決められる。
+ *   top    文字の上端からどれだけ下げるか
+ *   height 線の長さ
+ */
+.slash::after, .slash.dslash::before {
+  content: "";
+  position: absolute; top: .08em; width: .3em; height: .84em;
+  background: linear-gradient(to top right,
+    transparent calc(50% - 1px), var(--ink) calc(50% - 1px),
+    var(--ink) calc(50% + 1px), transparent calc(50% + 1px));
+  pointer-events: none;
 }
-.slash.dslash::after { content: "//"; left: -0.52em; }
-[data-annot="none"] .slash::after { display: none; }
+.slash::after { left: -0.16em; }
+.slash.dslash::before { left: -0.36em; }
+[data-annot="none"] .slash::after,
+[data-annot="none"] .slash.dslash::before { display: none; }
 
 /* 区切りのバーのボタン */
 .selbar button.sl {
