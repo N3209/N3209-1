@@ -1125,6 +1125,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   // 絞り込みは法令をまたいでも保つ。同じタグを別の法令で続けて見たいため。
   applyFilter(pane);
   renderFilterPicker();
+  paintFindHits();          // 移った先の法令にも、検索の色を塗り直す
   pane._crumbSig = null;     // 別の法令でも見出しIDは h1 から振り直される
   measureHeadings(pane);
 
@@ -3322,6 +3323,8 @@ async function doJump() {
   if (!r) { toast(`${numLabel(p.art, '条')}は見つかりません`); return; }
   if (r.note) toast(r.note);
 
+  endFind();                // 引いた先を読むので、前の検索の色は消す
+
   closeDrawerAfterJump();   // 同じ法令の中で引くときは navigate を通らない
   rememberPos();
   if (scrollToAnchor(r.anchor, false)) {
@@ -3533,6 +3536,22 @@ async function doFind() {
 function clearFind() {
   find.results = [];
   find.at = -1;
+  renderFindList();
+  paintFindHits();
+}
+
+/*
+ * 検索をやめる。
+ *
+ * 番号で引くのと、ことばで探すのは、別のやり方で同じ場所へ行く手段である。
+ * 引いた先を読もうとしているときに、前の検索の色が本文に残っていると邪魔になる。
+ * 打った言葉は欄に残すので、もう一度 Enter を押せば戻せる。
+ */
+function endFind() {
+  find.q = '';
+  find.results = [];
+  find.at = -1;
+  find.truncated = false;
   renderFindList();
   paintFindHits();
 }
