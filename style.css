@@ -797,13 +797,14 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
  * 「/」の文字ではなく、線を自分で描く。
  * 字形の「/」は書体ごとに長さも太さも違うので、文字の高さに合わせられない。
  * 箱の角から角へ引けば、両端の位置を数字で決められる。
- *   top    文字の上端からどれだけ下げるか
- *   height 線の長さ
+ *   bottom ベースラインからどれだけ下へ出すか（マイナスで下）
+ *   height 線の長さ。上端はベースラインから (height + bottom)
+ *   width  横幅。狭いほど線が立つ
  */
 .slash::after, .slash.dslash::before {
   content: "";
   /* bottom はベースラインからの位置。少し下へ出し、文字より気持ち長くする。 */
-  position: absolute; bottom: -.1em; width: .3em; height: 1.1em;
+  position: absolute; bottom: -.16em; width: .32em; height: 1.22em;
   /* 線は勾配の向きと直交する。/ を引くには、勾配を右下へ向ける。 */
   background: linear-gradient(to bottom right,
     transparent calc(50% - 1px), var(--ink) calc(50% - 1px),
