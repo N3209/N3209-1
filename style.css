@@ -221,8 +221,27 @@ button, .tabs button, .law-name, .article-title, .article-caption,
 .jump .go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .jump .go:hover { filter: brightness(1.08); }
 
-.find { flex: 1; min-width: 90px; }
-.find input { width: 100%; }
+/*
+ * 条文番号の欄とことばの欄が隣り合うので、見た目で分ける。
+ * 以前は2つの欄のあいだに「引く」ボタンがあり、どちらの欄のものか
+ * 分からなかった。ボタンをやめ、仕切りと虫眼鏡で役割を示す。
+ */
+.find {
+  flex: 1; min-width: 90px; position: relative;
+  padding-left: 11px; margin-left: 4px;
+  border-left: 1px solid var(--line);
+}
+.find::before {
+  content: "⌕";
+  position: absolute; left: 19px; top: 50%; transform: translateY(-52%);
+  color: var(--fg-faint); font-size: 16px; pointer-events: none;
+}
+.find input { width: 100%; padding-left: 26px; }
+
+/* シートの中では隣り合わないので、仕切りも虫眼鏡も要らない */
+.sheet-pane .find { padding-left: 0; margin-left: 0; border-left: none; }
+.sheet-pane .find::before { display: none; }
+.sheet-pane .find input { padding-left: 12px; }
 
 .topbar input {
   height: 34px; border: 1px solid var(--line); border-radius: 8px;

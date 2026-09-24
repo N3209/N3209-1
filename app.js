@@ -3938,7 +3938,6 @@ function wireKeypad() {
 }
 
 function wire() {
-  $('#jump-go').onclick = doJump;
   $('#jump-input').onkeydown = e => { if (e.key === 'Enter') doJump(); };
   $('#find-input').onkeydown = e => {
     if (e.key !== 'Enter') return;
