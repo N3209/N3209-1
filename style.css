@@ -54,6 +54,17 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   flex: none;
 }
 
+/*
+ * 上段の左ゾーン。広い画面では左ペインと同じ幅にする。
+ * こうすると、この右隣に置いた条文番号の欄が、本文の始まり（法令名）の
+ * 真上にそろう。仕切りをドラッグして左ペインの幅を変えても付いてくる。
+ * 6px は仕切りの幅。
+ */
+.topbar-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  width: calc(var(--side-width, 268px) - 6px);
+}
+
 .brand {
   font-size: 15px; font-weight: 700; letter-spacing: .14em;
   margin: 0 6px 0 2px; font-family: var(--font-body); white-space: nowrap;
@@ -1028,6 +1039,8 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   }
   #btn-menu { display: block; }
   .tab-close { display: block; }
+  /* 狭い画面では左ペインが覆いになるので、幅をそろえる相手がいない */
+  .topbar-head { width: auto; }
 
   /* 上段は ☰ と法令名だけにする。番号の欄・検索の欄・戻る進む・表示設定は
      すべて下へ移す（placeControls が DOM ごと動かす）。

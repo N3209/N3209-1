@@ -1715,7 +1715,7 @@ function placeControls() {
     if (jump.parentElement !== $('.topbar')) {
       // 上段の並びは ← → / 番号 / 2面 / 表示 の順に戻す
       $('.topbar').insertBefore(jump, $('#btn-split'));
-      $('.topbar').insertBefore(nav, jump);
+      $('.topbar-head').appendChild(nav);     // 戻る・進むは左ゾーンへ
       $('.topbar').appendChild(view);
       $('#pane-laws').insertBefore(panel, $('#panel-marks'));
     }

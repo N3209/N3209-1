@@ -16,19 +16,23 @@
 <body>
 
 <header class="topbar">
-  <button id="btn-menu" class="icon-btn" aria-label="法令と目次">☰</button>
-  <h1 class="brand">六法</h1>
+  <!-- 左ゾーン。広い画面では左ペインと同じ幅にして、この右端に
+       本文の始まり（法令名）が来るようにする。 -->
+  <div class="topbar-head">
+    <button id="btn-menu" class="icon-btn" aria-label="法令と目次">☰</button>
+    <h1 class="brand">六法</h1>
+    <div class="nav">
+      <button id="btn-back" class="icon-btn" aria-label="戻る" title="戻る (Alt+←)" disabled>←</button>
+      <button id="btn-fwd" class="icon-btn" aria-label="進む" title="進む (Alt+→)" disabled>→</button>
+    </div>
+  </div>
+
   <!-- 狭い画面では、上段は ☰ と法令名だけにする -->
   <span id="topbar-law" class="topbar-law">
     <span class="tl-name"></span>
     <span class="tl-dot" hidden></span>
     <span class="tl-date"></span>
   </span>
-
-  <div class="nav">
-    <button id="btn-back" class="icon-btn" aria-label="戻る" title="戻る (Alt+←)" disabled>←</button>
-    <button id="btn-fwd" class="icon-btn" aria-label="進む" title="進む (Alt+→)" disabled>→</button>
-  </div>
 
   <div class="jump">
     <input id="jump-input" type="text" inputmode="numeric" autocomplete="off"
