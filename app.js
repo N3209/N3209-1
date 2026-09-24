@@ -3188,6 +3188,15 @@ async function deleteRange(id) {
 
 /* ----------------------------------------------------------- 括弧書き */
 
+function clearParens(pane) {
+  for (const el of $$('span.paren', pane.el)) {
+    const parent = el.parentNode;
+    while (el.firstChild) parent.insertBefore(el.firstChild, el);
+    el.remove();
+    parent.normalize();
+  }
+}
+
 /*
  * 法令の一文は括弧書きで長く伸びる。主文を追えるように、括弧の中を薄くする。
  * 括弧は入れ子になる（「（…（…）…）」）ので深さを数え、深いほど薄くする。
@@ -4165,6 +4174,7 @@ function wireView() {
     if (!b) return;
     view.paren = b.dataset.paren;
     applyView(view);
+    for (const pane of livePanes()) paintParens(pane);   // 作る／外すはここで
   });
   $('#ink-picker').addEventListener('click', e => {
     const b = e.target.closest('button[data-ink]');
