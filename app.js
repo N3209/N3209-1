@@ -1034,15 +1034,6 @@ function wireLawDrag() {
   const rowsBelow = y => [...ul.querySelectorAll('li[data-law-id]')]
     .find(el => el !== dragRow && y < el.getBoundingClientRect().top + el.offsetHeight / 2);
 
-  /*
-   * iOS は touchstart の既定動作でスクロールと長押しを始める。
-   * pointerdown の preventDefault だけでは引き下がらないことがあるので、
-   * 取っ手の上では touchstart そのものを止める。
-   */
-  ul.addEventListener('touchstart', e => {
-    if (e.target.closest && e.target.closest('.grip')) e.preventDefault();
-  }, { passive: false });
-
   ul.addEventListener('pointerdown', e => {
     const grip = e.target.closest('.grip');
     if (!grip) return;
@@ -1053,7 +1044,13 @@ function wireLawDrag() {
     if (!row) return;
     e.preventDefault();
     cancelLawDrag();
-    try { grip.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動く */ }
+    /*
+     * capture は一覧そのものに付ける。取っ手に付けると、行を動かしたときに
+     * 取っ手も一緒に DOM の中を移動する。Safari はそこで capture を手放す
+     * ことがあり、掴んだ直後に終わってしまう（iPhone で並べ替えられない
+     * 症状の原因）。一覧は動かないので、掴んでいる間ずっと受け取れる。
+     */
+    try { ul.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動く */ }
     dragRow = row;
     dragPointer = e.pointerId;
     row.classList.add('dragging');
@@ -1073,6 +1070,9 @@ function wireLawDrag() {
   const finish = e => {
     if (!dragRow || (e && e.pointerId !== dragPointer)) return;
     const ok = dragRow.isConnected;
+    if (e && e.pointerId !== undefined) {
+      try { ul.releasePointerCapture(e.pointerId); } catch (err) { /* すでに外れている */ }
+    }
     cancelLawDrag();
     if (!ok) return;                 // 外れていたら、順は書かない
 
