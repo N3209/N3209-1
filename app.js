@@ -2276,12 +2276,7 @@ function paintNotesIn(pane) {
       el.appendChild(span);
     }
     if ((n.summary || '').trim()) insertSummary(el, n.summary);
-    if ((n.memo || '').trim()) {
-      const div = document.createElement('div');
-      div.className = 'memo-inline';
-      div.textContent = n.memo;
-      el.appendChild(div);
-    }
+    if ((n.memo || '').trim()) insertMemo(el, n.memo);
   }
 }
 
@@ -2302,6 +2297,49 @@ function insertSummary(el, text) {
   return span;
 }
 
+/*
+ * 後メモを入れる位置を決める。下位の条項号があれば、その直前を返す。
+ *
+ * 刑訴60条1項のように号を持つ項では、末尾に足すと第三号の下に出てしまう。
+ * 号にもそれぞれのアンカーがあるので、項に付けたメモと第三号に付けたメモが
+ * 見分けられない。会社法2条1項なら38号ぶん流れた先に出る。
+ *
+ * ただし自分の文を持たない要素は末尾のままにする。条は本文を持たず項を
+ * 並べるだけなので、前に入れると見出しの直後、つまり前メモと同じ場所になり、
+ * 「前」「後」の区別が消える。番号と見出しは自分の文には数えない。
+ */
+const NOT_BODY = ['article-title', 'para-num', 'item-title', 'article-caption',
+  'note-summary', 'inline-tags', 'memo-inline'];
+
+function memoInsertPoint(el) {
+  const first = [...el.children].find(c => c.dataset && c.dataset.anchor);
+  if (!first) return null;                        // 下位が無い。末尾でよい
+  for (let n = el.firstChild; n && n !== first; n = n.nextSibling) {
+    if (n.nodeType === 3) {                       // 素のテキスト。本文はここに出る
+      if (n.nodeValue.trim()) return first;
+      continue;
+    }
+    if (n.nodeType !== 1) continue;
+    if (NOT_BODY.some(c => n.classList.contains(c))) continue;
+    if (n.textContent.trim()) return first;       // 括弧書き・ルビ・印なども本文
+  }
+  return null;                                    // 自分の文が無い（条など）
+}
+
+/** 後メモを本文に置く。すでにあるものは、必要なときだけ動かす。 */
+function insertMemo(el, text) {
+  let div = el.querySelector(':scope > .memo-inline');
+  if (!div) {
+    div = document.createElement('div');
+    div.className = 'memo-inline';
+  }
+  const at = memoInsertPoint(el);                 // null なら末尾
+  // 打っている途中に飛ばさないよう、場所が変わるときだけ動かす
+  if (div.parentNode !== el || div.nextSibling !== at) el.insertBefore(div, at);
+  div.textContent = text;
+  return div;
+}
+
 /** 要約の打ち込みを本文側へ即時反映する */
 function updateInlineSummary(anchor, text, pane) {
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, (pane || P()).el);
@@ -2312,18 +2350,16 @@ function updateInlineSummary(anchor, text, pane) {
   else insertSummary(el, text);
 }
 
-/** 本文にぶら下げているメモを、打ち込みに合わせて即時更新する */
+/** 本文に置いているメモを、打ち込みに合わせて即時更新する */
 function updateInlineMemo(anchor, text, pane) {
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, (pane || P()).el);
   if (!el) return;
-  let div = el.querySelector(':scope > .memo-inline');
-  if (!String(text).trim()) { if (div) div.remove(); return; }
-  if (!div) {
-    div = document.createElement('div');
-    div.className = 'memo-inline';
-    el.appendChild(div);
+  if (!String(text).trim()) {
+    const old = el.querySelector(':scope > .memo-inline');
+    if (old) old.remove();
+    return;
   }
-  div.textContent = text;
+  insertMemo(el, text);
 }
 
 /* ---------------------------------------------- ファイルから取り込む */
