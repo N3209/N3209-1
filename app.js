@@ -2033,6 +2033,37 @@ function updateCrumb(pane) {
  * edit:false のときは枠を出すだけで注釈パネルを開かない。
  * 条文を引いた直後に見たいのは本文であって、編集欄ではないため。
  */
+/*
+ * 滑らせるか、瞬間で移るか。
+ *
+ * 近い先へ滑らせるのは役に立つ。どちらへどれだけ動いたかが目で追えるので、
+ * いま条文のどこにいるかの見当が保てる。
+ *
+ * しかし1条から709条のような距離を滑らせると、700条ぶんの本文がただ流れる
+ * だけで、そこから何も読み取れない。時間もかかり、目も疲れる。1画面半より
+ * 遠ければ瞬間で移る。番号で引くときはほとんどこちらになる。
+ *
+ * 端末で「動きを控える」を選んでいる人には、距離を問わず瞬間で移る。
+ */
+const SMOOTH_LIMIT = 1.5;               // 面の高さの何倍まで滑らせるか
+
+function reducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+function behaviorForDistance(dist, viewH) {
+  if (reducedMotion()) return 'auto';
+  if (!viewH) return 'smooth';          // 高さが取れない場面では今までどおり
+  return dist > viewH * SMOOTH_LIMIT ? 'auto' : 'smooth';
+}
+
+/** 面の真ん中から、飛び先がどれだけ離れているか（px） */
+function distanceTo(el, pane) {
+  const box = pane.el.getBoundingClientRect();
+  const to = el.getBoundingClientRect();
+  return Math.abs((to.top + to.height / 2) - (box.top + box.height / 2));
+}
+
 function scrollToAnchor(anchor, edit, pane) {
   pane = pane || P();
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
@@ -2043,7 +2074,10 @@ function scrollToAnchor(anchor, edit, pane) {
     setFilter(null, pane);
     toast('全文に戻しました');
   }
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.scrollIntoView({
+    block: 'center',
+    behavior: behaviorForDistance(distanceTo(el, pane), pane.el.clientHeight),
+  });
   selectAnchor(anchor, edit, pane);
   return true;
 }
@@ -2646,7 +2680,10 @@ function renderToc() {
       if (!target) return;
       rememberPos();
       closeDrawerAfterJump();
-      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      target.scrollIntoView({
+        block: 'start',
+        behavior: behaviorForDistance(distanceTo(target, P()), P().el.clientHeight),
+      });
       pushHist({ lawId: P().current.lawId, anchor: null, scrollTop: target.offsetTop });
     };
     ul.appendChild(li);
@@ -3601,6 +3638,9 @@ function resolveJump(p, pane) {
  * 打ちかけの番号が指す条文の頭を出す。
  * 番号を打っても、それが目当ての条文かどうかは飛んでみるまで分からない。
  * 先に頭の一文が見えれば、引く前に気づける。打ち間違いにも気づける。
+ *
+ * 当たりが出ている下見は、そこを押しても引ける（doJump へ）。目で確かめた直後に
+ * 視線を「引く」へ戻さずに済む。「引く」はそのまま残してある。
  */
 function updateJumpPreview() {
   const box = $('#jump-preview');
@@ -3608,9 +3648,13 @@ function updateJumpPreview() {
   const raw = $('#jump-input').value.trim();
   if (!raw || !P().current) { box.hidden = true; return; }
 
-  const show = (label, body, miss) => {
+  const show = (label, body, miss, go) => {
     box.hidden = false;
     box.classList.toggle('miss', !!miss);
+    // 引ける下見だけを押せるようにする。「見つかりません」は押しても何も起きない。
+    box.classList.toggle('go', !!go);
+    if (go) { box.setAttribute('role', 'button'); box.tabIndex = 0; }
+    else { box.removeAttribute('role'); box.removeAttribute('tabindex'); }
     box.innerHTML = `<span class="pv-label">${esc(label)}</span>`
       + `<span class="pv-text">${esc(body)}</span>`;
   };
@@ -3618,17 +3662,17 @@ function updateJumpPreview() {
   const { law, rest } = splitLawPrefix(raw);
   // 別の法令を指しているときは、開いてみないと中身が読めない
   if (law && law.lawId !== P().current.lawId) {
-    show(law.lawTitle, '「引く」を押すと開きます', true);
+    show(law.lawTitle, '押すと開きます', true, true);
     return;
   }
 
   const p = parseJump(law ? rest : raw);
   const r = p && resolveJump(p);
-  if (!r) { show(raw, '見つかりません', true); return; }
+  if (!r) { show(raw, '見つかりません', true, false); return; }
 
   const el = findAnchorEl(r.anchor);
   if (!el) { box.hidden = true; return; }
-  show(anchorLabel(r.anchor), previewTextOf(el), false);
+  show(anchorLabel(r.anchor), previewTextOf(el), false, true);
 }
 
 /** 下見に出す文字。自分で書いたメモ・タグ・ルビの読みは混ぜない。 */
@@ -4507,6 +4551,15 @@ function wireGlobal() {
   $('#btn-check').onclick = () => checkAmendments(true);
   $('#topbar-law').onclick = () => { if (P().current) openRevisions(P().current.lawId); };
   $('#jump-input').addEventListener('input', updateJumpPreview);
+  // 下見そのものを押しても引ける。当たりが出ているときだけ効く。
+  const pv = $('#jump-preview');
+  pv.onclick = () => { if (pv.classList.contains('go')) doJump(); };
+  pv.onkeydown = e => {
+    if ((e.key === 'Enter' || e.key === ' ') && pv.classList.contains('go')) {
+      e.preventDefault();
+      doJump();
+    }
+  };
   $('#btn-lookup-fab').onclick = () => setSheet($('#lookup-sheet').hidden);
   $('#lookup-sheet-close').onclick = () => setSheet(false);
   for (const b of $$('#sheet-tabs button')) {

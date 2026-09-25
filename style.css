@@ -472,6 +472,17 @@ body.resizing { cursor: col-resize; user-select: none; }
 .jump-preview.miss { color: var(--fg-dim); }
 .jump-preview.miss .pv-label { color: var(--fg-dim); }
 
+/* 当たりが出ている下見は押せる。押せることが見て分かるようにしておく。 */
+.jump-preview.go {
+  cursor: pointer;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.jump-preview.go:hover { background: var(--bg-hover); }
+.jump-preview.go:active { background: var(--bg-hover); transform: scale(.995); }
+.jump-preview.go:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* 番号で引く。電話と同じ並びで、入力欄が上、盤が下。
    キーの高さは iOS の数字キーボードと同じくらいに合わせてある。
    これ以上小さくすると押し間違いが出る。 */
@@ -815,7 +826,7 @@ a.ref:hover { color: var(--accent); border-bottom-color: var(--accent); backgrou
   padding: 1px 0 1px 9px;
   margin: .25em 0 .3em 1.2em;
 }
-.mk .note-summary { border-left-color: var(--dot); color: inherit; }
+.mk .note-summary { border-left-color: var(--dot); }
 
 /* メモは条文の下にぶら下げる */
 .memo-inline {
