@@ -2057,11 +2057,40 @@ function behaviorForDistance(dist, viewH) {
   return dist > viewH * SMOOTH_LIMIT ? 'auto' : 'smooth';
 }
 
-/** 面の真ん中から、飛び先がどれだけ離れているか（px） */
-function distanceTo(el, pane) {
+/*
+ * 飛び先を画面のどこに置くか。
+ *
+ * 前は scrollIntoView({ block: 'center' }) を使い、「要素の真ん中」を画面の
+ * 真ん中に合わせていた。しかし前メモ・後メモ・タグはその要素の中に入るので、
+ * メモを書くほど要素が縦に伸び、真ん中が下がる。そのぶん条番号は上へずれる。
+ * メモが画面より長くなると、条番号は画面の外へ出てしまう。
+ *
+ * 狙うのは要素の真ん中ではなく、条番号が見えるべき位置である。上端を面の
+ * 高さの 22% のところに置く。メモの長さに関わらず、引いた条文はいつも同じ
+ * 高さに出る。上に少し残すのは、直前の条文が見えている方が位置の見当が
+ * 付くからで、上端ぴったりに付けるとマークの●（left:-.95em）も窮屈になる。
+ */
+const JUMP_LEAD = 0.22;        // 飛び先の上端を、面の高さの何割のところに置くか
+
+/** 飛び先の上端 y を、面のどこに置くか。負にはしない。 */
+function jumpTopFor(y, viewH) {
+  return Math.max(0, y - viewH * JUMP_LEAD);
+}
+
+/** 面の中で、その要素まで何 px 送ればよいか */
+function scrollTopFor(el, pane) {
   const box = pane.el.getBoundingClientRect();
   const to = el.getBoundingClientRect();
-  return Math.abs((to.top + to.height / 2) - (box.top + box.height / 2));
+  // いまの送り量に、面の上端から要素の上端までの差を足すと、要素の絶対位置になる
+  return jumpTopFor(pane.el.scrollTop + (to.top - box.top), box.height);
+}
+
+/** 飛ぶ。滑らせるかどうかは、実際に送る距離で決める。 */
+function scrollPaneTo(top, pane) {
+  pane.el.scrollTo({
+    top,
+    behavior: behaviorForDistance(Math.abs(top - pane.el.scrollTop), pane.el.clientHeight),
+  });
 }
 
 function scrollToAnchor(anchor, edit, pane) {
@@ -2074,10 +2103,7 @@ function scrollToAnchor(anchor, edit, pane) {
     setFilter(null, pane);
     toast('全文に戻しました');
   }
-  el.scrollIntoView({
-    block: 'center',
-    behavior: behaviorForDistance(distanceTo(el, pane), pane.el.clientHeight),
-  });
+  scrollPaneTo(scrollTopFor(el, pane), pane);
   selectAnchor(anchor, edit, pane);
   return true;
 }
@@ -2680,11 +2706,10 @@ function renderToc() {
       if (!target) return;
       rememberPos();
       closeDrawerAfterJump();
-      target.scrollIntoView({
-        block: 'start',
-        behavior: behaviorForDistance(distanceTo(target, P()), P().el.clientHeight),
-      });
-      pushHist({ lawId: P().current.lawId, anchor: null, scrollTop: target.offsetTop });
+      const top = scrollTopFor(target, P());
+      scrollPaneTo(top, P());
+      // 履歴には実際に送った位置を残す。目次の位置と戻ったときの位置を揃える。
+      pushHist({ lawId: P().current.lawId, anchor: null, scrollTop: top });
     };
     ul.appendChild(li);
   }
