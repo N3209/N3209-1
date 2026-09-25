@@ -1249,7 +1249,11 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   pane.title.textContent = rec.lawTitle;
   // 分類と条文の件数は読むのに要らない。名前と、いつの版かだけ残す。
   pane.meta.textContent = rec.source === 'file'
-    ? '取り込んだデータ　施行日は不明'
+    ? [
+      rec.lawNum,
+      // 来歴があれば「施行日は不明」より具体的なことが言える
+      rec.provenance && rec.provenance['反映'] ? rec.provenance['反映'] : '',
+    ].filter(Boolean).join('　/　') || '取り込んだデータ　施行日は不明'
     : [
       rec.lawNum,
       rec.enforcementDate ? '施行: ' + rec.enforcementDate : '',
@@ -1272,8 +1276,22 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
      */
     const dups = rec.dupAnchors || [];
     const where = dups.length && dups.every(a => /^S/.test(a)) ? '附則に' : '';
-    note.innerHTML = '<span>取り込んだデータ　'
-      + esc(rec.importedAt || '') + ' 取り込み　施行日は不明</span>'
+    /*
+     * 来歴があるなら「施行日は不明」ではなく、分かっていることを出す。
+     * 特に「附則は含まない」は読むときに要る。書いていないと、附則が無いのを
+     * 法令の側の話だと思ってしまう。
+     * 帯は短くするので、全部は title に入れて触ったときに出す。
+     */
+    const prov = rec.provenance;
+    const full = prov
+      ? PROV_KEYS.filter(k => prov[k]).map(k => k + ': ' + prov[k]).join('\n')
+      : '';
+    const head = prov && (prov['反映'] || prov['範囲'])
+      ? [prov['反映'] ? prov['反映'] + ' 反映' : '', prov['範囲']].filter(Boolean).join('　')
+      : '施行日は不明';
+    note.innerHTML = '<span' + (full ? ' title="' + esc(full) + '"' : '') + '>'
+      + '取り込んだデータ　' + esc(head) + '　'
+      + esc(rec.importedAt || '') + ' 取り込み</span>'
       + (dups.length
         ? '<span class="warn" title="' + esc(dups.join('、')) + '">'
           + where + '位置の重なりが ' + dups.length + '件</span>'
@@ -2382,6 +2400,54 @@ function updateInlineMemo(anchor, text, pane) {
 const LOCAL_PREFIX = 'LOCAL_';
 
 /*
+ * 取り込むXMLの先頭のコメントから、来歴を読む。
+ *
+ * e-Gov から取ったものは、いつの版かが API の返す値で分かる。しかし自分で
+ * 起こしたデータは、どこから作ったのか・どの改正まで入っているのか・何を
+ * 含んでいないのかが、ファイルの外にしか無い。外に置くと必ず失われる。
+ * ファイルの中のコメントに書いておけば、書き出しても復元しても一緒に残る。
+ *
+ *   <!--
+ *     出典: 公的機関の法令データベース（日本語版）
+ *     反映: 令和七年最高裁判所規則第一一号 まで
+ *     範囲: 本則のみ（316条）。附則は含まない
+ *   -->
+ *
+ * 「行頭のラベル: 中身」の形だけを読む。決めた名前以外は拾わない。
+ * 取り込むファイルの中身を、そのまま画面に出すことになるからである。
+ */
+const PROV_KEYS = ['出典', 'URL', '取得', '反映', '範囲', '変換'];
+
+function readProvenance(doc) {
+  const out = {};
+  const scan = parent => {
+    for (const n of parent.childNodes) {
+      if (n.nodeType !== 8) continue;                  // コメント以外は見ない
+      for (const line of String(n.nodeValue).split('\n')) {
+        const m = line.match(/^\s*([^\s:：]+)\s*[:：]\s*(.+?)\s*$/);
+        if (m && PROV_KEYS.includes(m[1]) && !out[m[1]]) out[m[1]] = m[2].slice(0, 200);
+      }
+    }
+  };
+  scan(doc);
+  const law = doc.querySelector('Law');
+  if (law) scan(law);
+  return Object.keys(out).length ? out : null;
+}
+
+/*
+ * 取り込むXMLの LawNum は、そのまま信じられない。市販アプリの書き出しは
+ * ここにアプリ内部のIDを入れている。法令番号の形をしているときだけ使う。
+ */
+const LAW_NUM_RE = /^(明治|大正|昭和|平成|令和)[〇一二三四五六七八九十百千]+年.{1,14}第[〇一二三四五六七八九十百千]+号$/;
+
+function lawNumOf(doc) {
+  const el = doc.querySelector('LawNum');
+  const t = el ? el.textContent.trim() : '';
+  return LAW_NUM_RE.test(t) ? t : '';
+}
+
+/*
  * 市販アプリの書き出しには、注釈付きだと妥当な XML にならないものがある。
  * 既知の壊れ方は2つで、どちらも直せば標準のパーサで読める。
  *   ・XML 宣言が `?>` ではなく `>` で終わる
@@ -2442,9 +2508,10 @@ async function importLawFile(file) {
   const rec = {
     lawId: LOCAL_PREFIX + lawTitle,
     lawTitle,
-    lawNum: '',                    // 書き出しに入っている値はアプリ内部のIDで、法令番号ではない
+    lawNum: lawNumOf(doc),         // 法令番号の形をしているときだけ使う（上の LAW_NUM_RE）
     source: 'file',
     importedAt: today(),
+    provenance: readProvenance(doc),
     dupAnchors: dup,
     xml: new XMLSerializer().serializeToString(doc),
     savedAt: Date.now(),
