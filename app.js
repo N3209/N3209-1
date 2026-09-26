@@ -2469,7 +2469,13 @@ function stripAppElements(doc) {
   return n;
 }
 
-async function importLawFile(file) {
+/*
+ * 法令標準XMLのファイルを1本取り込む。
+ *
+ * opts.defer を渡すと、一覧の作り直しと画面の開き直しをしない。まとめて
+ * 取り込むときに、1本ごとに7回描き直すのを避けるためである（importLawFiles）。
+ */
+async function importLawFile(file, opts) {
   const raw = await file.text();
   let doc;
   try {
@@ -2523,6 +2529,9 @@ async function importLawFile(file) {
    * 「取り込みました」と出るので、新しい本文だと思い込む。
    */
   state.indexCache.delete(rec.lawId);
+  rec.strippedMarks = stripped;        // まとめて取り込むとき、呼び側が数を知らせる
+  if (opts && opts.defer) return rec;
+
   await refreshLawList();
   for (const pane of livePanes()) {
     if (pane.current && pane.current.lawId === rec.lawId) {
@@ -2536,6 +2545,58 @@ async function importLawFile(file) {
   if (dup.length) parts.push('同じ位置を指す条項が ' + dup.length + '件あります');
   toast(parts.join('　/　'));
   return rec;
+}
+
+/*
+ * まとめて取り込む。
+ *
+ * 規則のように、何本かを一度に用意することがある。1本ずつ選ばせると
+ * その回数だけ操作させることになる。
+ *
+ * 1本ごとに一覧を作り直したり画面を開き直したりはしない。7本なら7回
+ * 描き直すことになる。最後に一度だけまとめてやる。
+ *
+ * 途中で読めないものがあっても、残りは続ける。1本のために他を捨てる理由がない。
+ * 読めなかったものは名前を挙げて知らせる。黙って数を減らさない。
+ */
+async function importLawFiles(files) {
+  const list = [...files];
+  const done = [], failed = [];
+  for (const f of list) {
+    try {
+      done.push(await importLawFile(f, { defer: true }));
+    } catch (err) {
+      failed.push((f.name || 'ファイル') + '（' + err.message + '）');
+    }
+  }
+
+  await refreshLawList();
+  // 開いている面が取り込み直した法令を見ているなら、新しい本文に入れ替える
+  for (const pane of livePanes()) {
+    if (pane.current && done.some(r => r.lawId === pane.current.lawId)) {
+      await openLaw(pane.current.lawId, null, 0, pane);
+    }
+  }
+  if (done.length) await navigate(done[done.length - 1].lawId);
+
+  /*
+   * 知らせることは3つ。取り込めた数、読めなかったもの、位置の重なり。
+   * 重なりは法令名を挙げる。件数だけでは、どれを気にすべきか分からない。
+   */
+  const dup = done.filter(r => (r.dupAnchors || []).length);
+  const marks = done.reduce((n, r) => n + (r.strippedMarks || 0), 0);
+  const parts = [];
+  if (done.length) {
+    parts.push(done.length === 1
+      ? '「' + done[0].lawTitle + '」を取り込みました'
+      : done.length + '件を取り込みました');
+  }
+  if (failed.length) parts.push('読めなかったもの: ' + failed.join('、'));
+  if (marks) parts.push('注釈の印 ' + marks + '件は外しました');
+  if (dup.length) parts.push('位置の重なりあり: ' + dup.map(r => r.lawTitle).join('、'));
+  if (!parts.length) parts.push('取り込めるものがありませんでした');
+  toast(parts.join('　/　'));
+  return { done, failed };
 }
 
 /* -------------------------------------------------------------- 改正の追従 */
@@ -4526,15 +4587,11 @@ function wire() {
 
   $('#btn-import-law').onclick = () => $('#import-file').click();
   $('#import-file').onchange = async e => {
-    const f = e.target.files && e.target.files[0];
+    const files = [...(e.target.files || [])];
     e.target.value = '';                       // 同じファイルを選び直せるように
-    if (!f) return;
-    try {
-      await importLawFile(f);
-      $('#dlg-add').close();
-    } catch (err) {
-      toast('取り込めませんでした: ' + err.message);
-    }
+    if (!files.length) return;
+    const { done } = await importLawFiles(files);
+    if (done.length) $('#dlg-add').close();    // 1本も入らなければ開いたままにする
   };
 
   const addSearchBtn = $('#add-search');
