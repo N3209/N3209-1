@@ -864,6 +864,55 @@ mark.rng:hover { filter: brightness(.94); }
 /* メモ付きは下に点線を引いて、色だけのものと区別する */
 mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
 
+/*
+ * 下線は色を敷かない。読むときの強調なので、本文の地色を変えない。
+ *
+ * 下線そのものは text-decoration で描く。border-bottom を使うと、メモ付きの
+ * 点線（上の has-memo）と場所を争って、どちらか一方しか出なくなる。
+ */
+mark.rng-ul {
+  background: none;
+  text-decoration: underline;
+  text-decoration-color: var(--ink);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+/* 地色が無いので brightness では変化が出ない。薄く敷いて触れたことを示す */
+mark.rng-ul:hover {
+  filter: none;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+/* 色見本の下線。バー・ポップアップ・一覧で同じ形にする */
+.selbar button.ul, .palette button.ul {
+  background: none;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
+}
+/* 取り込んだデータの来歴。帯を押すと残りが出る */
+.law-note details.prov { display: inline-block; }
+.law-note details.prov > summary {
+  cursor: pointer; list-style: none;
+}
+.law-note details.prov > summary::-webkit-details-marker { display: none; }
+.law-note details.prov > summary::after {
+  content: " ⌄"; color: var(--fg-faint);
+}
+.law-note details.prov[open] > summary::after { content: " ⌃"; }
+.law-note details.prov > div {
+  font-size: 11.5px; line-height: 1.7; color: var(--fg-dim);
+  padding-left: 2px; word-break: break-all;
+}
+.law-note details.prov > div b { color: var(--fg); font-weight: 600; margin-right: 4px; }
+
+/* 一覧の小さな見本。色のものは四角を塗るが、下線は線で示す */
+.sw.ul {
+  background: none;
+  border: none;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
+}
+
 .selbar {
   position: fixed; z-index: 55; display: flex; align-items: center; gap: 5px;
   background: var(--bg-elev); border: 1px solid var(--line);
@@ -955,6 +1004,8 @@ mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
 [data-annot="none"] mark.rng {
   background: none; border-bottom: none; padding: 0; cursor: auto;
 }
+/* 「注釈を出さない」では下線も消す。text-decoration は上で消えない */
+[data-annot="none"] mark.rng-ul { text-decoration: none; }
 
 /* ------------------------------------------------------- 注釈のポップアップ */
 

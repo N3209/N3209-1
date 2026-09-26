@@ -526,6 +526,18 @@ const MARK_COLORS = [
   { key: 'red', label: '赤' }, { key: 'orange', label: '橙' }, { key: 'purple', label: '紫' },
 ];
 
+/*
+ * 文言に付けられる印。色のほかに下線がある。
+ *
+ * 色と下線は使い分ける。色は「この文言にメモを足したい」とき、下線は
+ * 「読むときに気を付けたい」ときの強調である。紙の六法でマーカーと下線を
+ * 使い分けるのと同じで、色を薄くした代わりではない。
+ *
+ * 条項号の印（上の MARK_COLORS）には下線を入れない。下線は文字そのものに
+ * 掛けるものなので、条や項の全体に掛ける意味がない。
+ */
+const RANGE_STYLES = [...MARK_COLORS, { key: 'ul', label: '下線' }];
+
 /** 親が自分で描画済みの要素。renderBlocks はこれらを飛ばす。 */
 const HANDLED_BY_PARENT = new Set([
   'LawTitle', 'LawNum', 'TOC',
@@ -1283,15 +1295,24 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
      * 帯は短くするので、全部は title に入れて触ったときに出す。
      */
     const prov = rec.provenance;
-    const full = prov
-      ? PROV_KEYS.filter(k => prov[k]).map(k => k + ': ' + prov[k]).join('\n')
-      : '';
     const head = prov && (prov['反映'] || prov['範囲'])
       ? [prov['反映'] ? prov['反映'] + ' 反映' : '', prov['範囲']].filter(Boolean).join('　')
       : '施行日は不明';
-    note.innerHTML = '<span' + (full ? ' title="' + esc(full) + '"' : '') + '>'
-      + '取り込んだデータ　' + esc(head) + '　'
-      + esc(rec.importedAt || '') + ' 取り込み</span>'
+    const band = '取り込んだデータ　' + esc(head) + '　'
+      + esc(rec.importedAt || '') + ' 取り込み';
+    /*
+     * 残りの来歴（出典・URL・変換の条件）は details で畳む。
+     *
+     * 以前は title に入れていたが、title はマウスを載せたときにしか出ない。
+     * スマホでは読む手立てが無く、キーボードでも辿れない（Codex の指摘）。
+     * details なら押して開けるし、読み上げも拾う。
+     */
+    const rest = prov ? PROV_KEYS.filter(k => prov[k] && !['反映', '範囲'].includes(k)) : [];
+    note.innerHTML = (rest.length
+      ? '<details class="prov"><summary>' + band + '</summary>'
+        + rest.map(k => '<div><b>' + esc(k) + '</b> ' + esc(prov[k]) + '</div>').join('')
+        + '</details>'
+      : '<span>' + band + '</span>')
       + (dups.length
         ? '<span class="warn" title="' + esc(dups.join('、')) + '">'
           + where + '位置の重なりが ' + dups.length + '件</span>'
@@ -2083,10 +2104,13 @@ function behaviorForDistance(dist, viewH) {
  * メモを書くほど要素が縦に伸び、真ん中が下がる。そのぶん条番号は上へずれる。
  * メモが画面より長くなると、条番号は画面の外へ出てしまう。
  *
- * 狙うのは要素の真ん中ではなく、条番号が見えるべき位置である。上端を面の
- * 高さの 22% のところに置く。メモの長さに関わらず、引いた条文はいつも同じ
- * 高さに出る。上に少し残すのは、直前の条文が見えている方が位置の見当が
+ * 狙うのは要素の真ん中ではなく、その塊の先頭である。上端を面の高さの 22% の
+ * ところに置く。上に少し残すのは、直前の条文が見えている方が位置の見当が
  * 付くからで、上端ぴったりに付けるとマークの●（left:-.95em）も窮屈になる。
+ *
+ * 後メモを何行書いても飛び先は動かない。ただし「条番号がいつも同じ高さ」では
+ * ない。条に付けた前メモは第1項より前に入るので、そこが長い条では条番号は
+ * そのぶん下に来る（Codex の指摘）。動かないのは塊の上端である。
  */
 const JUMP_LEAD = 0.22;        // 飛び先の上端を、面の高さの何割のところに置くか
 
@@ -2204,11 +2228,13 @@ function openRangePopover(id) {
   const palette = $('#palette');
   const paint = () => {
     palette.innerHTML = '';
-    for (const c of MARK_COLORS) {
+    for (const c of RANGE_STYLES) {
       const b = document.createElement('button');
       b.type = 'button';
       b.title = c.label;
-      b.style.background = `var(--mk-${c.key})`;
+      // 下線は色を敷かない。見本も下線で示す。
+      if (c.key === 'ul') b.className = 'ul';
+      else b.style.background = `var(--mk-${c.key})`;
       if (rec.color === c.key) b.classList.add('on');
       b.onclick = async () => { rec.color = c.key; await saveRange(rec); paint(); };
       palette.appendChild(b);
@@ -2326,7 +2352,16 @@ function insertSummary(el, text) {
  * 並べるだけなので、前に入れると見出しの直後、つまり前メモと同じ場所になり、
  * 「前」「後」の区別が消える。番号と見出しは自分の文には数えない。
  */
+/*
+ * 「自分の文」に数えないもの。番号・見出し・自分で書いた注釈。
+ *
+ * h-section は編章節款目の見出しで、renderBlock が出す。別記のように
+ * 本文を持たない容器の中に見出しと項が並ぶと、これを本文と数えてしまい
+ * 「見出し → 後メモ → 第1項」の順になる（Codex の指摘）。
+ * 本文を落とす向きの誤りを避けるため、除くのは見出しだけに限る。
+ */
 const NOT_BODY = ['article-title', 'para-num', 'item-title', 'article-caption',
+  'h-section', 'suppl-label', 'note-dup',
   'note-summary', 'inline-tags', 'memo-inline'];
 
 function memoInsertPoint(el) {
@@ -2439,7 +2474,13 @@ function readProvenance(doc) {
  * 取り込むXMLの LawNum は、そのまま信じられない。市販アプリの書き出しは
  * ここにアプリ内部のIDを入れている。法令番号の形をしているときだけ使う。
  */
-const LAW_NUM_RE = /^(明治|大正|昭和|平成|令和)[〇一二三四五六七八九十百千]+年.{1,14}第[〇一二三四五六七八九十百千]+号$/;
+/*
+ * 「令和元年」のように、元号の最初の年は「元」と書く（「一年」とは書かない）。
+ * 令和元年最高裁判所規則も実在するので、年のところだけ「元」を許す。
+ * これは法令番号の真正性を保証するものではなく、市販アプリが入れてくる
+ * 内部IDを除くための形の検査である。
+ */
+const LAW_NUM_RE = /^(明治|大正|昭和|平成|令和)(?:元|[〇一二三四五六七八九十百千]+)年.{1,14}第[〇一二三四五六七八九十百千]+号$/;
 
 function lawNumOf(doc) {
   const el = doc.querySelector('LawNum');
@@ -2529,22 +2570,68 @@ async function importLawFile(file, opts) {
    * 「取り込みました」と出るので、新しい本文だと思い込む。
    */
   state.indexCache.delete(rec.lawId);
-  rec.strippedMarks = stripped;        // まとめて取り込むとき、呼び側が数を知らせる
+  rec.strippedMarks = stripped;        // 通知でまとめて数えるため、記録に残す
+  /*
+   * ここで返すと、一覧の作り直しと画面の開き直しは呼び側がやる。
+   * まとめて取り込むとき、1本ごとに描き直すのを避けるため（importLawFiles）。
+   * 渡されなければ、下で1本ぶんの後始末をする。
+   */
   if (opts && opts.defer) return rec;
 
-  await refreshLawList();
-  for (const pane of livePanes()) {
-    if (pane.current && pane.current.lawId === rec.lawId) {
-      await openLaw(rec.lawId, null, 0, pane);
-    }
-  }
-  await navigate(rec.lawId);
-
-  const parts = ['「' + lawTitle + '」を取り込みました'];
-  if (stripped) parts.push('注釈の印 ' + stripped + '件は外しました');
-  if (dup.length) parts.push('同じ位置を指す条項が ' + dup.length + '件あります');
-  toast(parts.join('　/　'));
+  await finishImport([rec], []);
   return rec;
+}
+
+/*
+ * 取り込んだあとの後始末と通知。1本でもまとめてでも、ここだけを通る。
+ *
+ * 前は単体とまとめで同じ処理を二重に書いていた。文言が違うので、片方だけ
+ * 直して気づかない、という形になりやすい（Codex の指摘）。
+ *
+ * 保存はもう終わっている。ここから先で失敗しても、保存できた件数と
+ * 読めなかったファイル名は必ず知らせる。以前はここで例外が出ると報告ごと
+ * 失われ、何件入ったのか分からなくなっていた。
+ */
+async function finishImport(done, failed) {
+  let refreshFailed = '';
+  try {
+    await refreshLawList();
+    // 開いている面が取り込み直した法令を見ているなら、新しい本文に入れ替える
+    for (const pane of livePanes()) {
+      if (pane.current && done.some(r => r.lawId === pane.current.lawId)) {
+        await openLaw(pane.current.lawId, null, 0, pane);
+      }
+    }
+    if (done.length) await navigate(done[done.length - 1].lawId);
+  } catch (err) {
+    refreshFailed = err && err.message ? err.message : String(err);
+  }
+
+  /*
+   * 知らせることは4つ。取り込めたもの、読めなかったもの、外した注釈の印、
+   * 位置の重なり。重なりは法令名を挙げる。件数だけでは、どれを気にすべきか
+   * 分からない。
+   */
+  const dup = done.filter(r => (r.dupAnchors || []).length);
+  const marks = done.reduce((n, r) => n + (r.strippedMarks || 0), 0);
+  const parts = [];
+  if (done.length) {
+    parts.push(done.length === 1
+      ? '「' + done[0].lawTitle + '」を取り込みました'
+      : done.length + '件を取り込みました');
+  }
+  if (failed.length) parts.push('読めなかったもの: ' + failed.join('、'));
+  if (marks) parts.push('注釈の印 ' + marks + '件は外しました');
+  if (dup.length) {
+    parts.push(done.length === 1
+      ? '同じ位置を指す条項が ' + dup[0].dupAnchors.length + '件あります'
+      : '位置の重なりあり: ' + dup.map(r => r.lawTitle).join('、'));
+  }
+  // 保存はできている。画面が追いついていないだけだと分かるように書く
+  if (refreshFailed) parts.push('保存はできましたが画面の更新に失敗しました（' + refreshFailed + '）');
+  if (!parts.length) parts.push('取り込めるものがありませんでした');
+  toast(parts.join('　/　'));
+  return refreshFailed;
 }
 
 /*
@@ -2570,33 +2657,8 @@ async function importLawFiles(files) {
     }
   }
 
-  await refreshLawList();
-  // 開いている面が取り込み直した法令を見ているなら、新しい本文に入れ替える
-  for (const pane of livePanes()) {
-    if (pane.current && done.some(r => r.lawId === pane.current.lawId)) {
-      await openLaw(pane.current.lawId, null, 0, pane);
-    }
-  }
-  if (done.length) await navigate(done[done.length - 1].lawId);
-
-  /*
-   * 知らせることは3つ。取り込めた数、読めなかったもの、位置の重なり。
-   * 重なりは法令名を挙げる。件数だけでは、どれを気にすべきか分からない。
-   */
-  const dup = done.filter(r => (r.dupAnchors || []).length);
-  const marks = done.reduce((n, r) => n + (r.strippedMarks || 0), 0);
-  const parts = [];
-  if (done.length) {
-    parts.push(done.length === 1
-      ? '「' + done[0].lawTitle + '」を取り込みました'
-      : done.length + '件を取り込みました');
-  }
-  if (failed.length) parts.push('読めなかったもの: ' + failed.join('、'));
-  if (marks) parts.push('注釈の印 ' + marks + '件は外しました');
-  if (dup.length) parts.push('位置の重なりあり: ' + dup.map(r => r.lawTitle).join('、'));
-  if (!parts.length) parts.push('取り込めるものがありませんでした');
-  toast(parts.join('　/　'));
-  return { done, failed };
+  const refreshFailed = await finishImport(done, failed);
+  return { done, failed, refreshFailed };
 }
 
 /* -------------------------------------------------------------- 改正の追従 */
@@ -2957,16 +3019,19 @@ function renderMarkList() {
 
   const ml = $('#mark-list');
   ml.innerHTML = '';
-  const used = MARK_COLORS.filter(c => byColor.get(c.key));
+  const used = RANGE_STYLES.filter(c => byColor.get(c.key));
   const anySlash = marks.some(m => m.kind === 'slash');
   if (!used.length && !memoCount && !anySlash) {
     ml.innerHTML = '<li style="color:var(--fg-faint);cursor:default">まだありません</li>';
   }
   for (const c of used) {
     const li = document.createElement('li');
-    li.innerHTML = `<span class="sw" style="background:var(--mk-${c.key})"></span>`
+    li.innerHTML = (c.key === 'ul'
+      ? '<span class="sw ul"></span>'
+      : `<span class="sw" style="background:var(--mk-${c.key})"></span>`)
       + `<span>${esc(c.label)}</span><span class="n">${byColor.get(c.key)}</span>`;
-    li.onclick = () => showMarkResults(m => m.color === c.key, `${c.label}のマーク`);
+    li.onclick = () => showMarkResults(m => m.color === c.key,
+      c.key === 'ul' ? '下線' : `${c.label}のマーク`);
     ml.appendChild(li);
   }
   // 区切りは色もメモも持たないので、専用の行が無いと一覧から辿れない
@@ -4245,7 +4310,10 @@ function renderMarkResults() {
       const d = document.createElement('div');
       d.className = 'r';
       d.innerHTML = '<div class="sub">'
-        + (m.color ? `<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--mk-${m.color});vertical-align:-1px;margin-right:6px"></span>` : '')
+        // 下線は色を敷かない印なので、var(--mk-ul) は無い。見本も下線で示す
+        + (m.color === 'ul'
+          ? '<span class="sw ul" style="display:inline-block;width:10px;height:10px;vertical-align:-1px;margin-right:6px"></span>'
+          : m.color ? `<span class="sw" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--mk-${m.color});vertical-align:-1px;margin-right:6px"></span>` : '')
         + esc(anchorLabel(m.anchor))
         + (m.kind === 'range' ? '　<span style="color:var(--fg-faint)">文言</span>' : '')
         + (m.kind === 'slash' ? `　<span style="color:var(--ink);font-weight:700">${esc(m.slash)}</span>` : '')
@@ -4254,7 +4322,21 @@ function renderMarkResults() {
         + (m.phrase ? `<div class="snippet">「${esc(m.phrase.slice(0, 60))}」</div>`
           : entry ? `<div class="snippet">${esc(entry.text.slice(0, 110))}</div>` : '')
         + (m.memo ? `<div class="snippet" style="color:var(--fg-dim)">📝 ${esc(m.memo.slice(0, 80))}</div>` : '');
-      d.onclick = () => { $('#dlg-find').close(); navigate(m.lawId, m.anchor); };
+      /*
+       * 押したものをそのまま開く。
+       *
+       * navigate は選ぶだけ（edit:false）なので、一覧から辿っても注釈欄が
+       * 開かなかった。本文が取っ手でない場所（項が1つの条の第1項など）だと、
+       * 開く道がどこにも無くなる。押したのだから開くのが素直でもある。
+       */
+      d.onclick = async () => {
+        $('#dlg-find').close();
+        await navigate(m.lawId, m.anchor);
+        if (m.kind === 'note') { await selectAnchor(m.anchor, true); return; }
+        // 文言に付けたものは、その印のパネルを開く（条項号の注釈欄とは別）
+        const rec = state.ranges.get(m.id);
+        if (rec && !isSlash(rec)) openRangePopover(rec);
+      };
       box.appendChild(d);
     }
   }
@@ -4590,7 +4672,10 @@ function wire() {
     const files = [...(e.target.files || [])];
     e.target.value = '';                       // 同じファイルを選び直せるように
     if (!files.length) return;
-    const { done } = await importLawFiles(files);
+    // まとめ取り込みの中で捕まえきれなかったものも、ここで受ける
+    let done = [];
+    try { ({ done } = await importLawFiles(files)); }
+    catch (err) { toast('取り込めませんでした: ' + err.message); return; }
     if (done.length) $('#dlg-add').close();    // 1本も入らなければ開いたままにする
   };
 
@@ -4671,7 +4756,6 @@ function bindPaneEvents(pane) {
 
     /*
      * 番号を持たない単位は、本文そのものが取っ手になる。
-     *   ・第1項（項番号を出さないのが慣例）
      *   ・前文
      *   ・別表・別記・別図
      * 番号を持つ単位（②③…、号のイロハ、条）は番号を押してもらう。
@@ -4687,6 +4771,23 @@ function bindPaneEvents(pane) {
      */
     if (host.classList.contains('article') && host.querySelector('.article-title')) return;
     if (host.querySelector(':scope > .para-num, :scope > .item-title')) return;
+    /*
+     * 項が1つだけの条では、第1項の本文を取っ手にしない。条番号ひとつにする。
+     *
+     * 条番号は第1項の中に置かれている（第1項だけ項番号を出さないのが慣例）。
+     * そのため条番号を押すと「条」、その本文を押すと「第1項」が選ばれ、同じ場所に
+     * 取っ手が二つあった。しかも条のタグは条の末尾、第1項のタグは項の末尾に出る
+     * ので、項が1つの条では隣り合って二段に並ぶ。実測でタグの間は0字
+     * （民法709条・会社法2条）。手元の10法令5,606条のうち54%が項1つ。
+     *
+     * 項が2つ以上ある条では離れている（刑訴60条で274字、民法770条で78字）ので
+     * 取り違えようがない。そちらは本文を取っ手のまま残す。外すと、複数項の条の
+     * 第1項に注釈を付ける入口が無くなる。
+     */
+    if (host.classList.contains('para') && host.querySelector(':scope > .article-title')) {
+      const art = host.closest('.article');
+      if (art && art.querySelectorAll(':scope > .para[data-anchor]').length <= 1) return;
+    }
     selectAnchor(host.dataset.anchor, true, pane);
   });
 
