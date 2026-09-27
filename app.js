@@ -2473,12 +2473,7 @@ function paintNotesIn(pane) {
     const el = findAnchorEl(n.anchor, pane);
     if (!el) continue;
     if (n.color) el.classList.add('mk', 'mk-' + n.color);
-    if (n.tags && n.tags.length) {
-      const span = document.createElement('span');
-      span.className = 'inline-tags';
-      span.innerHTML = n.tags.map(t => `<span class="t">${esc(t)}</span>`).join('');
-      el.appendChild(span);
-    }
+    if (n.tags && n.tags.length) insertTags(el, n.tags);
     if ((n.summary || '').trim()) insertSummary(el, n.summary);
     if ((n.memo || '').trim()) insertMemo(el, n.memo);
   }
@@ -2568,6 +2563,33 @@ function memoSlot(el) {
 function memoInsertPoint(el) {
   const slot = memoSlot(el);
   return slot.parent === el ? slot.before : slot.before;
+}
+
+/*
+ * 文字タグを本文に置く。
+ *
+ * 以前は要素の末尾に足していた。すると号を持つ項では、号を全部飛び越えて
+ * 一番後ろに出る。刑訴89条（号6個）や会社法2条（号38個）で、タグだけが
+ * 遠くに離れていた。後メモと同じ場所（自分の文の直後）に置く。
+ *
+ * タグは短い札なので、後メモ（塊）より前に出す。paintNotesIn がタグ→後メモの
+ * 順に呼ぶので、同じ差し込み位置を指定すれば、その順に並ぶ。
+ */
+function insertTags(el, tags) {
+  const anchor = el.dataset.anchor || '';
+  const sel = '.inline-tags[data-for="' + attrEsc(anchor) + '"]';
+  let span = el.querySelector(sel);
+  if (!span) {
+    span = document.createElement('span');
+    span.className = 'inline-tags';
+    span.dataset.for = anchor;
+  }
+  span.innerHTML = tags.map(t => `<span class="t">${esc(t)}</span>`).join('');
+  const { parent, before } = memoSlot(el);
+  if (span.parentNode !== parent || span.nextSibling !== before) {
+    parent.insertBefore(span, before);
+  }
+  return span;
 }
 
 /*
@@ -4563,6 +4585,81 @@ function renderMarkResults() {
   }
 }
 
+/* --------------------------------------------- 条の注釈を第1項へ移す */
+
+/*
+ * 一度だけの移し替え。条の単位に付いた注釈を、第1項に付け直す。
+ *
+ * 以前は条番号を押すと「条」が選ばれたので、条の単位（M/709 のように項の
+ * 付かない住所）に注釈が付いていた。いまは条番号を押すと第1項が選ばれる。
+ * すると古い注釈は、本文に出ているのに押しても開けない。前メモだけが条見出しの
+ * 直後、つまり条文番号の行より上に残る。
+ *
+ * 一度きりの話なので、そのために機能を足さず、起動時に一度だけ移す。
+ *
+ * 気をつけること
+ *   ・移した先に注釈が既にあるものは触らない。勝手に混ぜない
+ *   ・消すのではなく墓石を残す。消しただけだと古いバックアップから復活する
+ *   ・住所の形が条に見えないもの（M/前文・別表・範囲）は触らない
+ *   ・移したかどうかを meta に記録して、二度走らせない
+ *   ・全部を一度のトランザクションで書く。半分だけ移った状態を残さない
+ *
+ * 取り消したいときはバックアップから戻す。移す前に書き出しておくのが安全。
+ */
+const MOVED_KEY = 'roppo.movedArticleNotes';
+
+/** 条の単位の住所か（M/709 のように、条番号までで止まっているか）。 */
+function isArticleAnchor(anchor) {
+  const parts = String(anchor || '').split('/');
+  if (parts.length !== 2) return false;
+  // 枝番（398_2）と範囲（170:174）は条である。前文・別表は違う
+  return /^\d+(_\d+)*(:\d+)?$/.test(parts[1]);
+}
+
+/** 移す対象を選ぶ。DBも時計も触らない（試験しやすくするため）。 */
+function planArticleNoteMove(all, now) {
+  const byKey = new Map(all.map(n => [n.key, n]));
+  const move = [], skip = [];
+  for (const n of all) {
+    if (isTomb(n)) continue;
+    if (!isArticleAnchor(n.anchor)) continue;
+    const to = n.anchor + '/1';
+    const toKey = (n.lawId || '') + ':' + to;
+    const there = byKey.get(toKey);
+    if (there && !isTomb(there)) { skip.push(n); continue; }   // 重なる。触らない
+    move.push({ from: n, toKey, to });
+  }
+  const notes = [];
+  for (const m of move) {
+    notes.push({ ...m.from, key: m.toKey, anchor: m.to, updatedAt: now });
+    notes.push(noteTomb(m.from, now));
+  }
+  return { notes, moved: move.length, skipped: skip.length, skip };
+}
+
+/** 起動時に一度だけ。移したら件数を知らせる。 */
+async function moveArticleNotesOnce() {
+  let done = null;
+  try { done = await store.getMeta(MOVED_KEY); } catch (e) { return; }
+  if (done && done.value) return;
+
+  let all;
+  try { all = await store.allNotes(); } catch (e) { return; }
+  const plan = planArticleNoteMove(all, Date.now());
+
+  try {
+    await store.applyBulk({ notes: plan.notes, meta: { [MOVED_KEY]: true } });
+  } catch (err) {
+    // 書けなければ印も付けない。次の起動でやり直す
+    toast('条の注釈を移せませんでした: ' + err.message);
+    return;
+  }
+  if (!plan.moved && !plan.skipped) return;          // 何も無ければ黙っている
+  await loadNotes();
+  toast('条に付いていた注釈 ' + plan.moved + '件を第1項へ移しました'
+    + (plan.skipped ? '（第1項に既にあった ' + plan.skipped + '件はそのまま）' : ''));
+}
+
 /* ------------------------------------------------------------ 同期：版 */
 
 /*
@@ -5456,6 +5553,8 @@ function registerServiceWorker() {
   loadAmendState();
   await loadNotes();
   await loadRanges();
+  // 条の単位に付いた古い注釈を第1項へ移す（一度だけ。上の注記を見よ）
+  await moveArticleNotesOnce();
   await refreshLawList();
   let last = null;
   try { last = localStorage.getItem('roppo.last'); } catch (e) { /* 使えなくても支障ない */ }
