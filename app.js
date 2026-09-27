@@ -127,7 +127,7 @@ function anchorLabel(anchor) {
 /* ------------------------------------------------------------ IndexedDB */
 
 const DB_NAME = 'roppo';
-const DB_VER = 3;
+const DB_VER = 4;
 let _db = null;
 
 function openDB() {
@@ -157,6 +157,20 @@ function openDB() {
        * …と数MBを読み出して捨てていた。法令を足すほど起動が遅くなる。
        * 見出しだけの小さな記録を別に置き、一覧はそちらを読む。
        */
+      /*
+       * v4: 同期の対象になるものを IndexedDB に集める。
+       *
+       * 法令の並び順は localStorage にあった。しかし同期では、注釈と並び順を
+       * 「まとめて確定する」必要がある（片方だけ入った状態を残さない）。
+       * localStorage は IndexedDB のトランザクションに入れられないので、
+       * 同じ入れ物に移す。localStorage に残るのは表示設定だけになる。
+       *
+       * キーと値の1対だけの単純な置き場所にしておく。同期の覚え書き
+       * （端末ID・世代番号など）も、ここに置けるようにするため。
+       */
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'key' });
+      }
       if (!db.objectStoreNames.contains('lawMeta')) {
         db.createObjectStore('lawMeta', { keyPath: 'lawId' });
         // すでにある法令から見出しを作る。ここは版を上げるときの1回だけ。
@@ -225,18 +239,64 @@ async function delLawAndMeta(id) {
   await txDone(t);
 }
 
+/*
+ * 復元・同期の反映を、一度のトランザクションで書く。
+ *
+ * 以前は法令・注釈・文言注釈を1件ずつ別のトランザクションで書いていた。
+ * 途中で失敗すると、半分入った状態が残る。どこまで入ったのかも分からない。
+ * 注釈は取り返せないので、ここは「全部入るか、何も入らないか」にする。
+ *
+ * トランザクションの中で IndexedDB 以外の待ちを入れてはいけない（自動で閉じる）。
+ * だから、渡すものは呼び側で全部そろえてから来ること。ここでは put を並べて、
+ * 最後に完了を待つだけにする。
+ */
+async function applyBulk({ laws, notes, ranges, lawOrder: order, meta }) {
+  const db = await openDB();
+  const names = ['laws', 'lawMeta', 'notes', 'ranges', 'meta'];
+  const t = db.transaction(names, 'readwrite');
+  const os = {};
+  for (const n of names) os[n] = t.objectStore(n);
+
+  /*
+   * put() は不正な値だと「その場で」例外を投げる（鍵が無いなど）。
+   * 受け止めずに抜けると、それまでに並べた書き込みだけが確定してしまう。
+   * 半分入った状態を残さないために、必ず中止してから投げ直す。
+   */
+  try {
+    for (const rec of laws || []) {
+      const { xml, ...m } = rec;
+      os.laws.put(rec);
+      os.lawMeta.put(m);
+    }
+    for (const n of notes || []) os.notes.put(n);
+    for (const r of ranges || []) os.ranges.put(r);
+    if (Array.isArray(order)) os.meta.put({ key: LAW_ORDER_KEY, value: order });
+    for (const [k, v] of Object.entries(meta || {})) os.meta.put({ key: k, value: v });
+  } catch (err) {
+    try { t.abort(); } catch (e) { /* すでに終わっているなら、そのまま */ }
+    throw err;
+  }
+
+  await txDone(t);
+}
+
 const store = {
+  applyBulk,
   allLaws: () => read('laws', s => s.getAll()),      // XML 込み。書き出しでだけ使う
   allLawMeta: () => read('lawMeta', s => s.getAll()),
   getLaw: id => read('laws', s => s.get(id)),
   putLaw: rec => putLawAndMeta(rec),
   delLaw: id => delLawAndMeta(id),
+  getMeta: key => read('meta', s => s.get(key)),
+  putMeta: (key, value) => write('meta', s => s.put({ key, value })),
   allNotes: () => read('notes', s => s.getAll()),
   putNote: rec => write('notes', s => s.put(rec)),
-  delNote: key => write('notes', s => s.delete(key)),
+  delNote: key => write('notes', s => s.delete(key)),        // 本当に消す。掃除と試験用
+  tombNote: rec => write('notes', s => s.put(rec)),          // 消した印を書く
   allRanges: () => read('ranges', s => s.getAll()),
   putRange: rec => write('ranges', s => s.put(rec)),
-  delRange: id => write('ranges', s => s.delete(id)),
+  delRange: id => write('ranges', s => s.delete(id)),        // 本当に消す。掃除と試験用
+  tombRange: rec => write('ranges', s => s.put(rec)),        // 消した印を書く
 };
 
 /* -------------------------------------------------------------- e-Gov API */
@@ -1014,10 +1074,71 @@ const livePanes = () => state.panes.filter(p => state.split || p.idx === 0);
 
 const noteKey = (lawId, anchor) => lawId + ':' + anchor;
 
+/*
+ * 属性セレクタに埋める文字。
+ *
+ * CSS.escape は古い環境と、試験のように差し替えを忘れた場面で無いことがある。
+ * 実際に、後メモの置き場所を探すのに使ったところで落ちた。アンカーは
+ * 英数字と / _ : だけなので、引用符と逆斜線だけ避ければ足りる。
+ */
+function attrEsc(v) {
+  const s = String(v == null ? '' : v);
+  if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') {
+    return CSS.escape(s);
+  }
+  return s.replace(/["\\]/g, ch => '\\' + ch);
+}
+
+/* ------------------------------------------------------------ 消した印 */
+
+/*
+ * 消したことを記録して残す（墓石）。本当に消さない。
+ *
+ * 消すたびに本当に削除していたので、「消した」という事実がどこにも残らなかった。
+ * すると古いバックアップを読み込んだときに、消したものが復活する。端末を
+ * 行き来させるなら、これは必ず起きる。
+ *
+ * 期限は付けない。「全端末が受け取ったら消してよい」と考えても、昔の
+ * バックアップを後から読めば復活の入口になる。2〜3台・数十KBの規模では、
+ * 墓石の容量より「消してよい条件」を実装する方が高くつく。
+ *
+ * 中身は小さくする。タグやメモの文面は残さない。消したのに文面が残るのは
+ * 筋が違う。復旧のためのバックアップには残るが、それは別の話である。
+ *
+ * updatedAt を deletedAt と同じ値にしておく。マージは updatedAt の新しい方を
+ * 残すので、こうすれば「消した」も「書いた」と同じ物差しで比べられる。
+ */
+const isTomb = r => !!(r && r.deletedAt);
+
+function noteTomb(note, now) {
+  return { key: note.key, lawId: note.lawId, anchor: note.anchor,
+    deletedAt: now, updatedAt: now };
+}
+
+function rangeTomb(rec, now) {
+  // 消す相手は id で決める。text や nth が同じでも別の注釈は消さない
+  return { id: rec.id, lawId: rec.lawId, anchor: rec.anchor,
+    deletedAt: now, updatedAt: now };
+}
+
+/** 墓石を除いたものだけ。画面に出すのはこちら。 */
+const livingOnly = list => list.filter(r => !isTomb(r));
+
 /* ------------------------------------------- メモの遅延保存（取りこぼし防止） */
 
 let pendingSave = null;      // 条項号のメモ { note, timer }
 let pendingRange = null;     // 文言メモ { rec, timer }
+/*
+ * 保存に失敗したものの鍵。
+ *
+ * 遅延保存は時計から呼ばれるので、失敗しても受け取る相手がいない。
+ * ここに残しておいて、書き出しや同期の前に見る。保存できていないのに
+ * 送ると、まだDBに無いものが「無い」として相手に伝わる。
+ *
+ * 真偽値ひとつにすると、一度失敗したら以後ずっと書き出せなくなる。
+ * 対象ごとに覚えて、同じものが保存できたら消す。空になれば止めない。
+ */
+const saveFailures = new Set();
 
 function scheduleSave(note) {
   if (pendingSave && pendingSave.note !== note) flushSave();
@@ -1039,7 +1160,7 @@ function scheduleRangeSave(rec) {
  * 条項号のメモと文言メモは別々に遅延させているので、両方をここで面倒を見る。
  * 片方だけ見ていると、見ていない側の書きかけが消える。
  */
-function flushSave() {
+async function flushSave() {
   const jobs = [];
   if (pendingSave) {
     clearTimeout(pendingSave.timer);
@@ -1053,8 +1174,25 @@ function flushSave() {
     pendingRange = null;
     jobs.push(saveRange(rec));
   }
-  return jobs.length ? Promise.all(jobs) : Promise.resolve();
+  const rs = jobs.length ? await Promise.all(jobs) : [];
+  return rs.every(r => r !== false);          // 全部保存できたか
 }
+
+/*
+ * 書き込み中のものが無いか。flushSave を呼べば解消する。
+ *
+ * 「保存に失敗したものがある」ことで止めはしない。失敗した内容はその時点で
+ * もう失われているので、書き出しを止めても取り戻せない。止めるより、
+ * 書き出せたものを残して、失敗があったことを添える方が役に立つ。
+ * 外へ送る同期では、そこを厳しく見る（savesAreClean）。
+ */
+function savesArePending() { return !!(pendingSave || pendingRange); }
+
+/** 書き込み中も無く、失敗も無いか。外へ送る前（同期）はここまで見る。 */
+function savesAreClean() { return !savesArePending() && saveFailures.size === 0; }
+
+/** 保存できなかったものの数。知らせるときに使う。 */
+function unsavedCount() { return saveFailures.size; }
 
 /* --------------------------------------------------------------- 法令一覧 */
 
@@ -1159,14 +1297,35 @@ function wireLawDrag() {
 const LAW_ORDER_KEY = 'roppo.lawOrder';
 let lawOrder = [];
 
-function loadLawOrder() {
-  try { lawOrder = JSON.parse(localStorage.getItem(LAW_ORDER_KEY) || '[]'); }
-  catch (e) { lawOrder = []; }
-  if (!Array.isArray(lawOrder)) lawOrder = [];
+/*
+ * 並び順を IndexedDB から読む。
+ *
+ * 以前は localStorage に置いていた。同期では注釈と並び順をまとめて確定したいので、
+ * IndexedDB へ移した。移す前の端末には localStorage にしか無いので、
+ * 一度だけ拾い上げて書き移す。拾ったあとも localStorage の値は消さない
+ * （古い版のアプリで開いたときに並びが失われないように）。
+ */
+async function loadLawOrder() {
+  let ids = null;
+  try {
+    const rec = await store.getMeta(LAW_ORDER_KEY);
+    if (rec && Array.isArray(rec.value)) ids = rec.value;
+  } catch (e) { /* 読めなければ下で localStorage を見る */ }
+
+  if (ids === null) {
+    try { ids = JSON.parse(localStorage.getItem(LAW_ORDER_KEY) || '[]'); }
+    catch (e) { ids = []; }
+    if (!Array.isArray(ids)) ids = [];
+    // 移し替えは一度だけ。空でも書いておかないと、毎回ここを通る
+    try { await store.putMeta(LAW_ORDER_KEY, ids); } catch (e) { /* 書けなくても読める */ }
+  }
+  lawOrder = ids;
 }
 
 function saveLawOrder(ids) {
   lawOrder = ids;
+  // IndexedDB を正本にする。localStorage にも書いて、古い版のアプリでも読めるようにする
+  store.putMeta(LAW_ORDER_KEY, ids).catch(() => { /* 下の localStorage が残る */ });
   try { localStorage.setItem(LAW_ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* 任意 */ }
 }
 
@@ -2284,7 +2443,8 @@ function closePopoverKeepSelection() {
 /* ------------------------------------------------------ タグ・メモの描画 */
 
 async function loadNotes() {
-  const all = await store.allNotes();
+  // 墓石は画面に出さない。比較と書き出しでは使うので、DBには残っている
+  const all = livingOnly(await store.allNotes());
   state.notes = new Map(all.map(n => [n.key, n]));
   renderMarkList();
   renderFilterPicker();
@@ -2364,31 +2524,73 @@ const NOT_BODY = ['article-title', 'para-num', 'item-title', 'article-caption',
   'h-section', 'suppl-label', 'note-dup',
   'note-summary', 'inline-tags', 'memo-inline'];
 
-function memoInsertPoint(el) {
-  const first = [...el.children].find(c => c.dataset && c.dataset.anchor);
-  if (!first) return null;                        // 下位が無い。末尾でよい
-  for (let n = el.firstChild; n && n !== first; n = n.nextSibling) {
+/** el が「自分の文」を持っているか。番号・見出し・自分で書いた注釈は数えない。 */
+function hasOwnBody(el, until) {
+  for (let n = el.firstChild; n && n !== until; n = n.nextSibling) {
     if (n.nodeType === 3) {                       // 素のテキスト。本文はここに出る
-      if (n.nodeValue.trim()) return first;
+      if (n.nodeValue.trim()) return true;
       continue;
     }
     if (n.nodeType !== 1) continue;
     if (NOT_BODY.some(c => n.classList.contains(c))) continue;
-    if (n.textContent.trim()) return first;       // 括弧書き・ルビ・印なども本文
+    if (n.textContent.trim()) return true;        // 括弧書き・ルビ・印なども本文
   }
-  return null;                                    // 自分の文が無い（条など）
+  return false;
 }
 
-/** 後メモを本文に置く。すでにあるものは、必要なときだけ動かす。 */
+/*
+ * 後メモを置く場所。親と、その直前に入れる要素を返す。
+ *
+ * 自分の文があれば、その直後（＝下位の条項号の直前）に置く。
+ *
+ * 条は自分の文を持たず、項を並べるだけである。しかし **項が1つだけの条** では、
+ * その項の中身が「この条の本文」そのものなので、中に入って柱書の直後に置く。
+ * ここを末尾のままにすると、号を持つ条で号の後ろへ回ってしまう。
+ * 刑訴89条（号6個）で末尾、会社法2条なら38号ぶん離れた先に出ていた。
+ *
+ * 項が2つ以上ある条は末尾のままにする。どの項に付けたのか紛れるし、
+ * 「この条について」のメモは最後にある方が自然である。
+ */
+function memoSlot(el) {
+  const first = [...el.children].find(c => c.dataset && c.dataset.anchor);
+  if (!first) return { parent: el, before: null };      // 下位が無い。末尾でよい
+  if (hasOwnBody(el, first)) return { parent: el, before: first };
+
+  if (el.classList.contains('article')) {
+    const paras = [...el.children]
+      .filter(c => c.classList.contains('para') && c.dataset && c.dataset.anchor);
+    if (paras.length === 1) return memoSlot(paras[0]);   // 項1つ＝この条の本文
+  }
+  return { parent: el, before: null };
+}
+
+/** 後方互換のための薄い包み（試験と、以前の呼び出しのため）。 */
+function memoInsertPoint(el) {
+  const slot = memoSlot(el);
+  return slot.parent === el ? slot.before : slot.before;
+}
+
+/*
+ * 後メモを本文に置く。すでにあるものは、必要なときだけ動かす。
+ *
+ * 置き場所が入れ子の中（項の中）になることがあるので、どのアンカーのメモかを
+ * data-for に書いておく。直下だけを探すと、中に入れたものを見つけられず、
+ * 塗り直すたびに増えてしまう。
+ */
 function insertMemo(el, text) {
-  let div = el.querySelector(':scope > .memo-inline');
+  const anchor = el.dataset.anchor || '';
+  const sel = '.memo-inline[data-for="' + attrEsc(anchor) + '"]';
+  let div = el.querySelector(sel);
   if (!div) {
     div = document.createElement('div');
     div.className = 'memo-inline';
+    div.dataset.for = anchor;
   }
-  const at = memoInsertPoint(el);                 // null なら末尾
+  const { parent, before } = memoSlot(el);
   // 打っている途中に飛ばさないよう、場所が変わるときだけ動かす
-  if (div.parentNode !== el || div.nextSibling !== at) el.insertBefore(div, at);
+  if (div.parentNode !== parent || div.nextSibling !== before) {
+    parent.insertBefore(div, before);
+  }
   div.textContent = text;
   return div;
 }
@@ -2408,7 +2610,8 @@ function updateInlineMemo(anchor, text, pane) {
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, (pane || P()).el);
   if (!el) return;
   if (!String(text).trim()) {
-    const old = el.querySelector(':scope > .memo-inline');
+    const old = el.querySelector('.memo-inline[data-for="'
+      + attrEsc(el.dataset.anchor || '') + '"]');
     if (old) old.remove();
     return;
   }
@@ -3221,20 +3424,31 @@ function renderNotePane() {
     ? '最終更新 ' + new Date(note.updatedAt).toLocaleString('ja-JP') : '';
 }
 
+/*
+ * 保存できたかどうかを返す（true / false）。
+ *
+ * 以前は失敗しても toast を出して正常に返っていたので、呼び側が成否を
+ * 区別できなかった。同期では「保存できていないのに送る」ことになる。
+ * 例外にはしない。打っている最中の自動保存が失敗したときに、操作全体を
+ * 止めてしまうため。
+ */
 async function saveNote(note) {
   note.updatedAt = Date.now();
   try {
     if (!note.tags.length && !(note.memo || '').trim()
       && !(note.summary || '').trim() && !note.color) {
-      await store.delNote(note.key);
+      // 消した印を残す。本当に消すと、古いバックアップから復活する
+      await store.tombNote(noteTomb(note, note.updatedAt));
       state.notes.delete(note.key);
     } else {
       await store.putNote(note);
       state.notes.set(note.key, note);
     }
+    saveFailures.delete('note:' + note.key);      // 保存できたので、前の失敗は解く
   } catch (err) {
+    saveFailures.add('note:' + note.key);
     toast('保存できませんでした: ' + err.message);
-    return;
+    return false;
   }
   renderMarkList();
   renderFilterPicker();
@@ -3248,13 +3462,15 @@ async function saveNote(note) {
   if (at && state.selected === note.anchor && P().current && P().current.lawId === note.lawId) {
     at.textContent = '最終更新 ' + new Date(note.updatedAt).toLocaleString('ja-JP');
   }
+  return true;
 }
 
 /* ------------------------------------------------------ 文言へのメモ（範囲） */
 
 
 async function loadRanges() {
-  state.ranges = new Map((await store.allRanges()).map(r => [r.id, r]));
+  // 墓石は画面に出さない。比較と書き出しでは使うので、DBには残っている
+  state.ranges = new Map(livingOnly(await store.allRanges()).map(r => [r.id, r]));
 }
 
 /** 現在の法令の範囲注釈を本文に塗る。位置が見つからないものは印を付けて残す。 */
@@ -3504,22 +3720,27 @@ function rangeFromSelection() {
   return { anchor: el.dataset.anchor, text, nth: Math.max(1, nth), el };
 }
 
+/** 保存できたかを返す。理由は saveNote の注記を見よ。 */
 async function saveRange(rec) {
   rec.updatedAt = Date.now();
   try {
     await store.putRange(rec);
   } catch (err) {
+    saveFailures.add('range:' + rec.id);
     toast('文言メモを保存できませんでした: ' + err.message);
-    return;
+    return false;
   }
+  saveFailures.delete('range:' + rec.id);         // 保存できたので、前の失敗は解く
   state.ranges.set(rec.id, rec);
   paintRanges();
   renderMarkList();
   renderFilterPicker();
+  return true;
 }
 
 async function deleteRange(id) {
-  await store.delRange(id);
+  const rec = state.ranges.get(id) || { id };
+  await store.tombRange(rangeTomb(rec, Date.now()));
   state.ranges.delete(id);
   paintRanges();
   renderMarkList();
@@ -4342,6 +4563,211 @@ function renderMarkResults() {
   }
 }
 
+/* ------------------------------------------------------------ 同期：版 */
+
+/*
+ * 「どちらの編集が後か」を、時計ではなく版で決める。
+ *
+ * updatedAt（端末の時計）で新しい方を残す形にしていたが、時計がずれると
+ * 古い内容が勝ち続ける。逆に巻き戻れば新しい編集が負ける。個人の端末でも
+ * 時計は狂う。
+ *
+ * 代わりに、レコードごとに「どの端末の何番目の編集を取り込んだか」を持つ。
+ *
+ *   version: { "pc-xxxx": 4, "iphone-yyyy": 2 }
+ *
+ * 共通の版 {PC:4, iPhone:2} から別々に編集すると
+ *
+ *   PC の編集      {PC:5, iPhone:2}
+ *   iPhone の編集  {PC:4, iPhone:3}
+ *
+ * になる。片方がすべての項目で他方以上なら、それが後の編集。互いに大きい
+ * 項目があるなら、互いを見ずに編集したということ＝衝突である。
+ * 書かれていない項目は 0 とみなす。
+ *
+ * updatedAt は捨てない。「最終更新」として画面に出すのに使う。
+ */
+
+/** 版の各項目を読む。無ければ0。 */
+const vvAt = (v, id) => Number((v && v[id]) || 0);
+
+/** 版に出てくる端末の名前を全部。並びは決め打ちにする（下の vvKey を見よ）。 */
+function vvIds(a, b) {
+  return [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].sort();
+}
+
+/*
+ * 版を文字列にする。鍵を並べ替えてから作る。
+ *
+ * JSON.stringify をそのまま使うと、鍵の順番が入力の順番で決まる。同じ版でも
+ * 端末によって別の文字列になり、重複の判定と同順位の決着が端末ごとに
+ * 食い違う。同期では「どの端末でも同じ結果」が要るので、ここを揃える。
+ * 0 の項目は書かない（無いのと同じ意味なので）。
+ */
+function vvKey(v) {
+  const o = v || {};
+  return Object.keys(o).sort()
+    .filter(k => Number(o[k]) > 0)
+    .map(k => k + ':' + Number(o[k]))
+    .join('|');
+}
+
+/** a のすべての項目が b 以上か。 */
+function vvDominates(a, b) {
+  return vvIds(a, b).every(id => vvAt(a, id) >= vvAt(b, id));
+}
+
+/**
+ * 2つの版の関係。
+ *   'same'     同じ
+ *   'left'     左が後（左を採る）
+ *   'right'    右が後
+ *   'conflict' 互いを見ずに編集された
+ */
+function vvCompare(a, b) {
+  const l = vvDominates(a, b);
+  const r = vvDominates(b, a);
+  if (l && r) return 'same';
+  if (l) return 'left';
+  if (r) return 'right';
+  return 'conflict';
+}
+
+/** 両方を見た、という版を作る（項目ごとの大きい方）。 */
+function vvMerge(a, b) {
+  const out = {};
+  for (const id of vvIds(a, b)) {          // vvIds は並べ替えて返す
+    const n = Math.max(vvAt(a, id), vvAt(b, id));
+    if (n > 0) out[id] = n;
+  }
+  return out;
+}
+
+/** この端末の編集を1つ進めた版を返す。元の版は変えない。 */
+function vvBump(v, deviceId) {
+  const out = { ...(v || {}) };
+  out[deviceId] = vvAt(out, deviceId) + 1;
+  return out;
+}
+
+/* --------------------------------------------------- 同期：マージの核 */
+
+/*
+ * 衝突したとき、片方を捨てない。
+ *
+ * 表に出すのは1つだけ決める（画面がぶれないように）。もう片方は alts に
+ * 積んでおく。alts はレコードの一部なので、同期でもバックアップでも一緒に
+ * 運ばれる。利用者が選んだら、両方の版を取り込んだ新しい編集にする。
+ *
+ * 表に出す側は「時計が新しい方、同じなら端末の名前が小さい方」で決める。
+ * 時計を信じているのではなく、どの端末でも同じ結果になるようにするため。
+ */
+function pickShown(a, b) {
+  const ta = Number(a.updatedAt || 0);
+  const tb = Number(b.updatedAt || 0);
+  if (ta !== tb) return ta > tb ? [a, b] : [b, a];
+  const ia = vvKey(a.version);
+  const ib = vvKey(b.version);
+  return ia <= ib ? [a, b] : [b, a];
+}
+
+/** alts を、同じ版のものを重ねずに集める。 */
+function collectAlts(...recs) {
+  const seen = new Map();
+  for (const r of recs) {
+    if (!r) continue;
+    for (const alt of r.alts || []) {
+      const k = vvKey(alt.version);
+      if (!seen.has(k)) seen.set(k, alt);
+    }
+  }
+  return [...seen.values()];
+}
+
+/** alts のうち、採用したレコードより古いものは落とす。 */
+function pruneAlts(alts, chosen) {
+  const out = [];
+  const seen = new Set();
+  for (const alt of alts) {
+    if (vvDominates(chosen.version, alt.version)) continue;   // もう解決済み
+    const k = vvKey(alt.version);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const { alts: _drop, ...clean } = alt;                    // alts は入れ子にしない
+    out.push(clean);
+  }
+  return out;
+}
+
+/**
+ * 同じ鍵の2つのレコードを1つにする。入力は変えない。
+ *
+ * 版を持たない古いレコード（版を入れる前のバックアップ）も来る。その場合は
+ * 昔どおり updatedAt で比べる。因果関係の情報が無いので、それしかできない。
+ */
+function mergeRecord(left, right) {
+  if (!left) return right ? { ...right, alts: pruneAlts(collectAlts(right), right) } : right;
+  if (!right) return { ...left, alts: pruneAlts(collectAlts(left), left) };
+
+  const hasVv = !!(left.version || right.version);
+  if (!hasVv) {
+    // 版を持たない同士。昔の物差し（時計）で決める。同じなら左を残す
+    const [win] = pickShown(left, right);
+    return { ...win };
+  }
+
+  const rel = vvCompare(left.version, right.version);
+  if (rel === 'same' || rel === 'left' || rel === 'right') {
+    const base = rel === 'right' ? right : left;
+    const other = rel === 'right' ? left : right;
+    const alts = pruneAlts(collectAlts(left, right), base);
+    const out = { ...base, version: vvMerge(left.version, right.version) };
+    if (alts.length) out.alts = alts; else delete out.alts;
+    // 'same' でも相手の alts は拾う。片方だけが衝突を抱えていることがある
+    void other;
+    return out;
+  }
+
+  // 衝突。表に出す方を決め、もう片方は alts に積む
+  const [shown, hidden] = pickShown(left, right);
+  const { alts: _a, ...shownClean } = shown;
+  const { alts: _b, ...hiddenClean } = hidden;
+  const alts = pruneAlts([hiddenClean, ...collectAlts(left, right)], shownClean);
+  return alts.length ? { ...shownClean, alts } : { ...shownClean };
+}
+
+/** 衝突を抱えているか（画面に「別の編集があります」と出す判断）。 */
+const hasConflict = r => !!(r && r.alts && r.alts.length);
+
+/**
+ * 鍵ごとに寄せてマージする。入力の配列も要素も変えない。
+ * 順番を変えても、何度混ぜても同じ結果になること（試験で確かめている）。
+ */
+function mergeLists(left, right, keyOf) {
+  const out = new Map();
+  for (const r of left || []) {
+    const k = keyOf(r);
+    if (k === undefined || k === null || k === '') continue;
+    out.set(k, out.has(k) ? mergeRecord(out.get(k), r) : r);
+  }
+  for (const r of right || []) {
+    const k = keyOf(r);
+    if (k === undefined || k === null || k === '') continue;
+    out.set(k, out.has(k) ? mergeRecord(out.get(k), r) : r);
+  }
+  // 片方だけにあったものも、alts の掃除を通す
+  for (const [k, r] of out) out.set(k, mergeRecord(r, null));
+  return [...out.values()];
+}
+
+/** 衝突を解いて1つにする。選んだ内容に、両方の版を取り込んだ新しい編集を作る。 */
+function resolveConflict(rec, chosen, deviceId) {
+  let v = rec.version || {};
+  for (const alt of rec.alts || []) v = vvMerge(v, alt.version);
+  const { alts: _drop, ...body } = chosen;
+  return { ...body, version: vvBump(v, deviceId) };
+}
+
 /* -------------------------------------------------------- 書き出しと復元 */
 
 const BACKUP_VERSION = 1;
@@ -4362,6 +4788,13 @@ const stamp = () => new Date().toISOString().slice(0, 10);
 
 /** 全法令（無加工のXML）と全注釈を1ファイルに。これがあれば完全に戻せる。 */
 async function exportBackup() {
+  /*
+   * 書きかけを先に確定させる。
+   *
+   * メモは500ms遅れて保存される。待たずに書き出すと、いま打った文が
+   * 入らないバックアップができる。それを信じて端末を初期化したら失われる。
+   */
+  await flushSave();
   const laws = await store.allLaws();
   const notes = await store.allNotes();
   const ranges = await store.allRanges();
@@ -4374,48 +4807,93 @@ async function exportBackup() {
     ranges,               // 文言への注釈
     lawOrder,             // 自分で並べた順。端末を変えても残したい
   };
+  // 数えて見せるのは生きているものだけ。墓石はファイルには入るが、数には入れない
+  const living = livingOnly(notes).length + livingOnly(ranges).length;
+  const tombs = notes.length + ranges.length - living;
   download(`roppo-backup-${stamp()}.json`, JSON.stringify(data), 'application/json');
-  toast(`法令 ${laws.length}件 / 注釈 ${notes.length + ranges.length}件 を書き出しました`);
+  toast(`法令 ${laws.length}件 / 注釈 ${living}件 を書き出しました`
+    + (tombs ? `（消した印 ${tombs}件も含む）` : '')
+    + (unsavedCount() ? `　※保存できなかったものが ${unsavedCount()}件あります` : ''));
 }
 
 /**
  * バックアップから復元する。
  * 注釈は updatedAt が新しい方を残す（古い書き出しで上書きしないため）。
+ *
+ * 全部を検めてから、一度のトランザクションで書く。以前は1件ずつ別々に
+ * 書いていたので、途中で失敗すると半分入った状態が残り、どこまで入ったのかも
+ * 分からなかった。注釈は取り返せないので「全部入るか、何も入らないか」にする。
+ *
+ * 版（version）も見る。知らない版は読まない。部分的に読んで書き戻すと、
+ * こちらが知らない項目を消してしまう。
  */
 async function importBackup(file) {
+  // 書きかけを先に確定させる。手元の新しい内容が「無い」と見なされないように
+  await flushSave();
+
   const text = await file.text();
   let data;
   try { data = JSON.parse(text); } catch (e) { toast('JSONとして読めません'); return; }
   if (data.format !== 'roppo-backup') { toast('このアプリのバックアップではありません'); return; }
+  const ver = Number(data.version);
+  if (!Number.isFinite(ver) || ver < 1) { toast('版が読み取れません'); return; }
+  if (ver > BACKUP_VERSION) {
+    toast(`新しい版のバックアップです（版${ver}）。このアプリを更新してください`);
+    return;
+  }
 
-  let addedLaws = 0, addedNotes = 0, keptNewer = 0;
+  /*
+   * 比較の相手は IndexedDB を読み直したものにする。
+   * state.notes は画面用の写しで、別のタブが書いていると古い。
+   */
+  const curNotes = new Map((await store.allNotes()).map(n => [n.key, n]));
+  const curRanges = new Map((await store.allRanges()).map(r => [r.id, r]));
+  const curLaws = new Map((await store.allLawMeta()).map(l => [l.lawId, l]));
+
+  const laws = [], notes = [], ranges = [];
+  let keptNewer = 0;
+
   for (const law of data.laws || []) {
     if (!law.lawId || !law.xml) continue;
-    await store.putLaw(law);
-    state.indexCache.delete(law.lawId);
-    addedLaws++;
+    /*
+     * 法令XMLも時刻で比べる。以前は無条件に上書きしていたので、古い
+     * バックアップを読むと取り込み直した本文が古いものに戻っていた。
+     * 取り込んだ規則のように取り直せないものだと、それが実害になる。
+     */
+    const cur = curLaws.get(law.lawId);
+    if (cur && (cur.savedAt || 0) > (law.savedAt || 0)) { keptNewer++; continue; }
+    laws.push(law);
   }
   for (const n of data.notes || []) {
     if (!n.key) continue;
-    const cur = state.notes.get(n.key);
+    const cur = curNotes.get(n.key);
     if (cur && (cur.updatedAt || 0) > (n.updatedAt || 0)) { keptNewer++; continue; }
-    await store.putNote(n);
-    addedNotes++;
+    notes.push(n);
   }
-  if (Array.isArray(data.lawOrder) && data.lawOrder.length) saveLawOrder(data.lawOrder);
   for (const r of data.ranges || []) {
     if (!r.id) continue;
-    const cur = state.ranges.get(r.id);
+    const cur = curRanges.get(r.id);
     if (cur && (cur.updatedAt || 0) > (r.updatedAt || 0)) { keptNewer++; continue; }
-    await store.putRange(r);
-    addedNotes++;
+    ranges.push(r);
   }
+  const order = Array.isArray(data.lawOrder) && data.lawOrder.length ? data.lawOrder : null;
+
+  try {
+    await store.applyBulk({ laws, notes, ranges, lawOrder: order });
+  } catch (err) {
+    toast('復元できませんでした（何も変えていません）: ' + err.message);
+    return;
+  }
+
+  for (const law of laws) state.indexCache.delete(law.lawId);
+  if (order) lawOrder = order;
   await loadNotes();
   await loadRanges();
   await refreshLawList();
   if (P().current) await openLaw(P().current.lawId);
-  toast(`法令 ${addedLaws}件 / 注釈 ${addedNotes}件 を復元`
-    + (keptNewer ? `（手元が新しい ${keptNewer}件は残しました）` : ''));
+  toast(`法令 ${laws.length}件 / 注釈 ${notes.length + ranges.length}件 を復元`
+    + (keptNewer ? `（手元が新しい ${keptNewer}件は残しました）` : '')
+    + (unsavedCount() ? `　※保存できなかったものが ${unsavedCount()}件あります` : ''));
 }
 
 function openExportDialog() {
@@ -4746,10 +5224,19 @@ function bindPaneEvents(pane) {
      */
     const num = e.target.closest('.article-title, .para-num, .item-title');
     if (num) {
-      // 条番号は第1項の中に置かれているので、近い方をたどると項になる。条まで上がる。
-      const host = num.classList.contains('article-title')
-        ? num.closest('.article')
-        : num.closest('[data-anchor]');
+      /*
+       * 番号を押したら、その番号が属する単位を選ぶ。条番号なら第1項である。
+       *
+       * 条番号は第1項の本文の頭に置かれている（第1項だけ番号を出さないのが
+       * 慣例）。以前はここで .article まで上がって「条」を選んでいたが、
+       * それだと第1項を指す取っ手がどこにも無くなる。刑訴280条のように
+       * 3項あって、どの項も番号を持たない法令では、第1項に注釈を付けられない。
+       *
+       * 注釈の単位は項に寄せる。読むときも「280条1項」と引くのであって、
+       * 「280条」と「280条1項」を別に印を付けたい場面は、まず無い。
+       * 条の単位に付いた古い注釈は、本文には出るし、印とメモの一覧から選べる。
+       */
+      const host = num.closest('[data-anchor]');
       if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
       return;
     }
@@ -4772,22 +5259,10 @@ function bindPaneEvents(pane) {
     if (host.classList.contains('article') && host.querySelector('.article-title')) return;
     if (host.querySelector(':scope > .para-num, :scope > .item-title')) return;
     /*
-     * 項が1つだけの条では、第1項の本文を取っ手にしない。条番号ひとつにする。
-     *
-     * 条番号は第1項の中に置かれている（第1項だけ項番号を出さないのが慣例）。
-     * そのため条番号を押すと「条」、その本文を押すと「第1項」が選ばれ、同じ場所に
-     * 取っ手が二つあった。しかも条のタグは条の末尾、第1項のタグは項の末尾に出る
-     * ので、項が1つの条では隣り合って二段に並ぶ。実測でタグの間は0字
-     * （民法709条・会社法2条）。手元の10法令5,606条のうち54%が項1つ。
-     *
-     * 項が2つ以上ある条では離れている（刑訴60条で274字、民法770条で78字）ので
-     * 取り違えようがない。そちらは本文を取っ手のまま残す。外すと、複数項の条の
-     * 第1項に注釈を付ける入口が無くなる。
+     * 第1項は条番号が取っ手。本文を押しても同じ第1項が選ばれるので、どちらでも
+     * 構わない。取っ手が二つあって困るのは、押す先が違うときだけである。
+     * いまはどちらを押しても項が選ばれるので、そのままにしておく。
      */
-    if (host.classList.contains('para') && host.querySelector(':scope > .article-title')) {
-      const art = host.closest('.article');
-      if (art && art.querySelectorAll(':scope > .para[data-anchor]').length <= 1) return;
-    }
     selectAnchor(host.dataset.anchor, true, pane);
   });
 
@@ -4977,7 +5452,7 @@ function registerServiceWorker() {
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
   placeControls();
-  loadLawOrder();
+  await loadLawOrder();
   loadAmendState();
   await loadNotes();
   await loadRanges();
