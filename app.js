@@ -4697,12 +4697,17 @@ function setGAccount(v) {
 }
 
 /** 画面ごと Google へ移る。戻ってきたら resumeAfterAuth が受ける。 */
-function gGo(resume) {
+function gGo(resume, pick) {
   const st = newDeviceId();
   try {
     sessionStorage.setItem(G_STATE, st);
     sessionStorage.setItem(G_RESUME, resume || '');
   } catch (e) { /* 戻ってから state を確かめられないだけ */ }
+  /*
+   * pick を渡すと、必ずアカウントの選択画面を出す。
+   * 端末ごとに違うアカウントに繋がっていると、置き場所（appDataFolder）が
+   * 別になり、互いのファイルが見えない。実際にそうなった。選び直せる道が要る。
+   */
   location.href = G_AUTH
     + '?client_id=' + encodeURIComponent(G_CLIENT_ID)
     + '&redirect_uri=' + encodeURIComponent(gRedirect())
@@ -4710,7 +4715,8 @@ function gGo(resume) {
     + '&scope=' + encodeURIComponent(G_SCOPE)
     + '&state=' + encodeURIComponent(st)
     + '&include_granted_scopes=true'
-    + (gAccount() ? '&login_hint=' + encodeURIComponent(gAccount()) : '');
+    + (pick ? '&prompt=select_account' : '')
+    + (!pick && gAccount() ? '&login_hint=' + encodeURIComponent(gAccount()) : '');
 }
 
 /*
@@ -5085,19 +5091,39 @@ function setSyncState(s) {
  * 取り込み0件のとき、原因が「相手がまだ置いていない」のか「別のアカウントを
  * 見ている」のかが分からなかった。置いてあるものを見せれば切り分けられる。
  */
+/*
+ * いまどのアカウントに繋がっているかを聞く。
+ * drive.appdata のスコープでも、自分が誰かは答えてもらえる。
+ * 取れなければ黙って諦める（これが取れなくても同期はできる）。
+ */
+async function whoAmI() {
+  try {
+    const r = await fetch(
+      'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName)',
+      { headers: { Authorization: 'Bearer ' + gToken.value } });
+    if (!r.ok) return '';
+    const d = await r.json();
+    return (d && d.user && (d.user.emailAddress || d.user.displayName)) || '';
+  } catch (e) { return ''; }
+}
+
 async function peekRemote() {
   if (!navigator.onLine) { toast('通信できません'); return; }
   if (!gAlive()) { toast('Google に接続します…'); gGo('peek'); return; }
   const box = $('#sync-peek');
   if (box) { box.hidden = false; box.textContent = '調べています…'; }
   try {
+    const who = await whoAmI();
     const list = await driveRemote().listSnapshots();
     const ds = await loadDatasetId();
     const lines = [];
+    if (who) lines.push('繋がっているアカウント: ' + who);
+    else lines.push('繋がっているアカウント: （分かりません）');
     lines.push('この端末: ' + deviceId + (ds ? '　かたまり: ' + ds : '　かたまり: まだ無し'));
     if (!list.length) {
       lines.push('置いてあるもの: なし');
       lines.push('（相手がまだ同期していないか、別の Google アカウントを見ています）');
+      lines.push('※ 両方の端末で、上のアカウントが同じかを確かめてください');
     } else {
       lines.push('置いてあるもの ' + list.length + '件:');
       const by = new Map();
@@ -6037,6 +6063,11 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
+  $('#btn-pick').onclick = () => {
+    gToken = null;                       // いまのを捨ててから選び直す
+    toast('アカウントを選んでください…');
+    gGo('peek', true);
+  };
   $('#sync-account').value = gAccount();
   $('#sync-account-save').onclick = () => {
     setGAccount($('#sync-account').value);
