@@ -1110,15 +1110,18 @@ function attrEsc(v) {
  */
 const isTomb = r => !!(r && r.deletedAt);
 
-function noteTomb(note, now) {
+function noteTomb(note, now, version) {
   return { key: note.key, lawId: note.lawId, anchor: note.anchor,
-    deletedAt: now, updatedAt: now };
+    deletedAt: now, updatedAt: now,
+    // 「消した」も1つの編集。版を持たせないと前後が決められない
+    version: version || note.version || {} };
 }
 
-function rangeTomb(rec, now) {
+function rangeTomb(rec, now, version) {
   // 消す相手は id で決める。text や nth が同じでも別の注釈は消さない
   return { id: rec.id, lawId: rec.lawId, anchor: rec.anchor,
-    deletedAt: now, updatedAt: now };
+    deletedAt: now, updatedAt: now,
+    version: version || rec.version || {} };
 }
 
 /** 墓石を除いたものだけ。画面に出すのはこちら。 */
@@ -3456,6 +3459,8 @@ function renderNotePane() {
  */
 async function saveNote(note) {
   note.updatedAt = Date.now();
+  // この端末の編集を1つ進める。前後は時計ではなくこれで決める
+  note.version = vvBump(note.version, deviceId);
   try {
     if (!note.tags.length && !(note.memo || '').trim()
       && !(note.summary || '').trim() && !note.color) {
@@ -3745,6 +3750,7 @@ function rangeFromSelection() {
 /** 保存できたかを返す。理由は saveNote の注記を見よ。 */
 async function saveRange(rec) {
   rec.updatedAt = Date.now();
+  rec.version = vvBump(rec.version, deviceId);       // 理由は saveNote の注記を見よ
   try {
     await store.putRange(rec);
   } catch (err) {
@@ -3762,7 +3768,8 @@ async function saveRange(rec) {
 
 async function deleteRange(id) {
   const rec = state.ranges.get(id) || { id };
-  await store.tombRange(rangeTomb(rec, Date.now()));
+  const now = Date.now();
+  await store.tombRange(rangeTomb(rec, now, vvBump(rec.version, deviceId)));
   state.ranges.delete(id);
   paintRanges();
   renderMarkList();
@@ -4953,6 +4960,32 @@ async function moveArticleNotesOnce() {
  * updatedAt は捨てない。「最終更新」として画面に出すのに使う。
  */
 
+/*
+ * この端末の名前。版の項目名になる。
+ *
+ * インストールごとに1つ作り、meta に置く。バックアップから復元しても
+ * 引き継がない（同じ名前の端末が2つになると、版の前後が決められなくなる）。
+ * 名前自体に意味は持たせない。誰の端末かも書かない。
+ */
+const DEVICE_KEY = 'roppo.deviceId';
+let deviceId = '';
+
+function newDeviceId() {
+  const a = new Uint8Array(8);
+  if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(a);
+  else for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256);
+  return 'd' + [...a].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function loadDeviceId() {
+  try {
+    const rec = await store.getMeta(DEVICE_KEY);
+    if (rec && typeof rec.value === 'string' && rec.value) { deviceId = rec.value; return; }
+  } catch (e) { /* 下で作る */ }
+  deviceId = newDeviceId();
+  try { await store.putMeta(DEVICE_KEY, deviceId); } catch (e) { /* 次回また作る */ }
+}
+
 /** 版の各項目を読む。無ければ0。 */
 const vvAt = (v, id) => Number((v && v[id]) || 0);
 
@@ -5074,7 +5107,17 @@ function mergeRecord(left, right) {
   if (!left) return right ? { ...right, alts: pruneAlts(collectAlts(right), right) } : right;
   if (!right) return { ...left, alts: pruneAlts(collectAlts(left), left) };
 
-  const hasVv = !!(left.version || right.version);
+  /*
+   * 版で比べられるのは、**両方が版を持っているとき**だけである。
+   *
+   * 空の版（{}）は「版が無い」と同じに扱う。持たせただけで中身が無いものを
+   * 「版がある」と見ると、昔の物差しに落ちずに 'same' になり、左が無条件に勝つ。
+   *
+   * 片方だけが版を持つ場合も版では決められない。版を入れる前に作った
+   * バックアップには因果関係の情報が無いので、版を持つ手元が常に勝ってしまい、
+   * 古いバックアップから戻せなくなる。そのときは時計で決める。
+   */
+  const hasVv = !!(vvKey(left.version) && vvKey(right.version));
   if (!hasVv) {
     // 版を持たない同士。昔の物差し（時計）で決める。同じなら左を残す
     const [win] = pickShown(left, right);
@@ -5211,36 +5254,35 @@ async function importBackup(file) {
    * 比較の相手は IndexedDB を読み直したものにする。
    * state.notes は画面用の写しで、別のタブが書いていると古い。
    */
-  const curNotes = new Map((await store.allNotes()).map(n => [n.key, n]));
-  const curRanges = new Map((await store.allRanges()).map(r => [r.id, r]));
+  const curNotes = await store.allNotes();
+  const curRanges = await store.allRanges();
   const curLaws = new Map((await store.allLawMeta()).map(l => [l.lawId, l]));
 
-  const laws = [], notes = [], ranges = [];
   let keptNewer = 0;
 
+  const laws = [];
   for (const law of data.laws || []) {
     if (!law.lawId || !law.xml) continue;
     /*
-     * 法令XMLも時刻で比べる。以前は無条件に上書きしていたので、古い
-     * バックアップを読むと取り込み直した本文が古いものに戻っていた。
+     * 法令XMLは時刻で比べる。本文には版を持たせていない（e-Gov から取り直せる
+     * ものなので、編集の前後を追う必要がない）。以前は無条件に上書きしていたので、
+     * 古いバックアップを読むと取り込み直した本文が古いものに戻っていた。
      * 取り込んだ規則のように取り直せないものだと、それが実害になる。
      */
     const cur = curLaws.get(law.lawId);
     if (cur && (cur.savedAt || 0) > (law.savedAt || 0)) { keptNewer++; continue; }
     laws.push(law);
   }
-  for (const n of data.notes || []) {
-    if (!n.key) continue;
-    const cur = curNotes.get(n.key);
-    if (cur && (cur.updatedAt || 0) > (n.updatedAt || 0)) { keptNewer++; continue; }
-    notes.push(n);
-  }
-  for (const r of data.ranges || []) {
-    if (!r.id) continue;
-    const cur = curRanges.get(r.id);
-    if (cur && (cur.updatedAt || 0) > (r.updatedAt || 0)) { keptNewer++; continue; }
-    ranges.push(r);
-  }
+
+  /*
+   * 注釈はマージの核に任せる。版があれば版で、無ければ時計で前後を決め、
+   * 互いを見ずに編集されたものは両方残す（alts）。
+   * ここに判定を書かない。同期でも同じ核を通すので、二重に書くと食い違う。
+   */
+  const notes = mergeLists(curNotes, data.notes || [], r => r.key);
+  const ranges = mergeLists(curRanges, data.ranges || [], r => r.id);
+  const conflicts = notes.filter(hasConflict).length + ranges.filter(hasConflict).length;
+
   const order = Array.isArray(data.lawOrder) && data.lawOrder.length ? data.lawOrder : null;
 
   try {
@@ -5256,8 +5298,10 @@ async function importBackup(file) {
   await loadRanges();
   await refreshLawList();
   if (P().current) await openLaw(P().current.lawId);
-  toast(`法令 ${laws.length}件 / 注釈 ${notes.length + ranges.length}件 を復元`
-    + (keptNewer ? `（手元が新しい ${keptNewer}件は残しました）` : '')
+  const living = livingOnly(notes).length + livingOnly(ranges).length;
+  toast(`法令 ${laws.length}件 / 注釈 ${living}件 を復元`
+    + (keptNewer ? `（本文は手元が新しい ${keptNewer}件を残しました）` : '')
+    + (conflicts ? `　※別々に直したものが ${conflicts}件あります（両方残しました）` : '')
     + (unsavedCount() ? `　※保存できなかったものが ${unsavedCount()}件あります` : ''));
 }
 
@@ -5818,6 +5862,7 @@ function registerServiceWorker() {
   switchSheetTab(sheetTab);
   placeControls();
   await authProbe();          // 【仮】認証の往復を試す。確かめ終わったら消す
+  await loadDeviceId();
   await loadLawOrder();
   loadAmendState();
   await loadNotes();
