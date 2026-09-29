@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v76';
+const APP_VERSION = 'v77';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -3578,8 +3578,7 @@ function renderNotePane() {
         note.tags.push(t);
         await saveNote(note);
         paintChips();
-        paintKnownRef = paintKnown;
-  paintKnown();
+        paintKnown();
       };
       known.appendChild(b);
     }
@@ -3601,6 +3600,12 @@ function renderNotePane() {
     tagInput.value = '';
     await addTag(v);
   };
+  /*
+   * 外したタグを候補に戻せるよう、チップ側からも呼べるようにしておく。
+   * この代入が「候補を押したとき」の中に紛れ込んでいたため、一度も候補を
+   * 押していないうちはチップを外しても候補が出し直されなかった。
+   */
+  paintKnownRef = paintKnown;
   paintKnown();
 
   const summary = $('#summary-input');
@@ -6384,25 +6389,71 @@ async function measurePerf() {
    * タグを1つ付けると走る処理を、順に測る。
    * 5秒かかるという申し出が、どの行のことなのかをここで切り分ける。
    */
+  /*
+   * 待ち時間は「処理が終わった時刻」ではなく「絵になった時刻」で測る。
+   * 関数から戻っただけでは、配置の計算も描き直しもまだ済んでいない。
+   * 強いて配置を読ませ（scrollHeight）、そこまでを1つの手間と数える。
+   */
   const ms = (name, fn) => {
     const t = performance.now();
-    try { fn(); } catch (e) { return name + ' ✗' + (e && e.message ? '(' + e.message + ')' : ''); }
+    try { fn(); void el.scrollHeight; }
+    catch (e) { return name + ' ✗' + (e && e.message ? '(' + e.message + ')' : ''); }
     return name + ' ' + (performance.now() - t).toFixed(1) + 'ms';
   };
+
+  /*
+   * タグを1つ付けて、外すところまでを実際にやる。
+   *
+   * 前は paintNotes / paintRanges を呼んで測っていたが、いまの保存は
+   * その道を通らない。測る先が実物とずれていては、切り分けにならない。
+   * 使うのは本文の一番上の条項号。中身は残さない。
+   */
+  const probe = el.querySelector('[data-anchor]');
   lines.push('');
-  lines.push('タグを1つ付けるときに走る処理');
-  lines.push('  ' + ms('本文の塗り直し', () => paintNotes())
-    + '　' + ms('文言の塗り直し', () => paintRanges()));
-  lines.push('  ' + ms('印とメモの一覧', () => renderMarkList())
-    + '　' + ms('絞り込みの札', () => renderFilterPicker()));
-  lines.push('  ' + ms('注釈欄', () => renderNotePane())
-    + '　' + ms('見出しの位置', () => measureHeadings(pane)));
-  // 配置を一度読み直させる。大きな本文ほど、ここが効いてくる
-  lines.push('  ' + ms('配置の読み直し1回', () => {
-    el.style.setProperty('--perf-probe', String(Math.random()));
+  if (!probe) {
+    lines.push('タグの付け外しは測れませんでした（条項号が見つかりません）');
+  } else {
+    const anchor = probe.dataset.anchor;
+    const key = noteKey(pane.current.lawId, anchor);
+    const had = state.notes.get(key);
+    lines.push('タグを1つ付けるときに走る処理（' + anchorLabel(anchor) + 'で試す）');
+
+    const note = had
+      ? { ...had, tags: [...(had.tags || []), '＿測定用'] }
+      : { key, lawId: pane.current.lawId, anchor, tags: ['＿測定用'],
+        color: '', summary: '', memo: '' };
+
+    const tSave = performance.now();
+    await saveNote(note);
     void el.scrollHeight;
-    el.style.removeProperty('--perf-probe');
-  }));
+    lines.push('  保存から絵になるまで ' + (performance.now() - tSave).toFixed(1) + 'ms');
+
+    // 内訳。保存そのもの（DB待ち）と、画面の作り直しを分ける
+    const tDb = performance.now();
+    try { await store.getNote(key); } catch (e) { /* 測れなくても続ける */ }
+    lines.push('  DBを1件読む ' + (performance.now() - tDb).toFixed(1) + 'ms');
+    lines.push('  ' + ms('触った条項号の塗り直し', () => repaintNote(pane.current.lawId, anchor))
+      + '　' + ms('注釈欄', () => renderNotePane()));
+    lines.push('  ' + ms('印とメモの一覧', () => renderMarkList())
+      + '　' + ms('絞り込みの札', () => renderFilterPicker()));
+    lines.push('  ' + ms('見出しの位置を測り直す', () => measureHeadings(pane)));
+    lines.push('  ' + ms('法令ぜんぶの塗り直し（前のやり方）', () => { paintNotes(); paintRanges(); }));
+
+    /*
+     * 元に戻す。saveNote は通さない。
+     *
+     * 通すと版が進み、無かったところには消した印が残る。測るために
+     * 利用者のデータを増やしてはいけない。元の記録をそのまま書き戻し、
+     * 無かったものは本当に消す。
+     */
+    try {
+      if (had) { await store.putNote(had); state.notes.set(key, had); }
+      else { await store.delNote(key); state.notes.delete(key); }
+    } catch (e) { toast('測定の後始末に失敗しました: ' + e.message); }
+    repaintNote(pane.current.lawId, anchor);
+    renderMarkList();
+    renderFilterPicker();
+  }
 
   out.textContent = lines.join('\n') + '\n\nいま本文を指で動かしてください（3秒）…';
 
