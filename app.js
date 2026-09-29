@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v73';
+const APP_VERSION = 'v74';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -2513,8 +2513,17 @@ function closePopoverKeepSelection() {
 /* ------------------------------------------------------ タグ・メモの描画 */
 
 async function loadNotes() {
-  // 墓石は画面に出さない。比較と書き出しでは使うので、DBには残っている
-  const all = livingOnly(await store.allNotes());
+  /*
+   * 読めない形のものがDBに残っていても、起動はできるようにする。
+   *
+   * 検証を通り抜けて入ってしまったものがあると、ここで例外になり、以後は
+   * 起動するたびに同じ場所で止まる。画面が出ないので消すこともできない。
+   * DBからは消さず（後で直せるように）、画面に出すものからだけ外す。
+   */
+  const rows = await store.allNotes();
+  const bad = rows.filter(n => noteProblem(n, true));
+  const all = livingOnly(rows.filter(n => !noteProblem(n, true)));
+  if (bad.length) toast('読めない注釈が ' + bad.length + '件あります（表示していません）');
   state.notes = new Map(all.map(n => [n.key, n]));
   renderMarkList();
   renderFilterPicker();
@@ -3631,8 +3640,12 @@ async function saveNote(note) {
 
 
 async function loadRanges() {
-  // 墓石は画面に出さない。比較と書き出しでは使うので、DBには残っている
-  state.ranges = new Map(livingOnly(await store.allRanges()).map(r => [r.id, r]));
+  // 墓石は画面に出さない。読めない形のものも外す（loadNotes と同じ理由）
+  const rows = await store.allRanges();
+  const bad = rows.filter(r => rangeProblem(r, true));
+  if (bad.length) toast('読めない文言注釈が ' + bad.length + '件あります（表示していません）');
+  state.ranges = new Map(
+    livingOnly(rows.filter(r => !rangeProblem(r, true))).map(r => [r.id, r]));
 }
 
 /** 現在の法令の範囲注釈を本文に塗る。位置が見つからないものは印を付けて残す。 */
@@ -5043,7 +5056,14 @@ async function syncOnce(remote, opts) {
 
   const incoming = [];
   for (const s of all) {
-    if (s.datasetId && s.datasetId !== datasetId) {
+    /*
+     * かたまりの印が無いものは混ぜない。
+     *
+     * 印が空だと「別のかたまり」の判定をすり抜けて、そのまま取り込まれる。
+     * どこの誰のものか分からないものを、黙って自分の注釈に混ぜてはいけない。
+     */
+    if (!s.datasetId) { out.skipped.push(s.writerId + '（かたまりの印が無い）'); continue; }
+    if (s.datasetId !== datasetId) {
       out.skipped.push(s.writerId);                  // 別のかたまり。混ぜない
       // どのかたまりを飛ばしたかは持ち帰る。合流するかどうかは利用者が決める
       if (!out.otherDatasets.includes(s.datasetId)) out.otherDatasets.push(s.datasetId);
@@ -5647,6 +5667,56 @@ function buildSnapshot({ notes, ranges, order, datasetId, writerId, generation }
 }
 
 /*
+ * 注釈1件の形を検める。おかしければ理由を、問題なければ '' を返す。
+ *
+ * 前は鍵の有無しか見ていなかった。そのため tags が配列でないような記録も
+ * 検証を通り、DBに入り、以後は起動のたびに loadNotes が同じ場所で落ちる。
+ * 一度入ると消す手立てが画面に無いので、入る前に弾く。
+ */
+const okStr = s => s === undefined || typeof s === 'string';
+const okNum = n => n === undefined || (typeof n === 'number' && Number.isFinite(n));
+const okTags = t => t === undefined
+  || (Array.isArray(t) && t.every(x => typeof x === 'string'));
+const okVv = v => {
+  if (v === undefined) return true;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  return Object.values(v).every(n => Number.isInteger(n) && n > 0);
+};
+
+/** deep が false のものは候補（alts）を持てない。候補の入れ子は作らない。 */
+function noteProblem(n, deep) {
+  if (!n || typeof n !== 'object' || Array.isArray(n)) return '中身がない';
+  if (typeof n.key !== 'string' || !n.key) return '鍵が無い';
+  if (!okStr(n.lawId) || !okStr(n.anchor)) return '法令や条項号の指し方が違う';
+  if (!okTags(n.tags)) return 'タグが配列でない';
+  if (!okStr(n.color) || !okStr(n.summary) || !okStr(n.memo)) return '中身が文字列でない';
+  if (!okNum(n.updatedAt) || !okNum(n.deletedAt)) return '時刻が数でない';
+  if (!okVv(n.version)) return '版の形が違う';
+  if (n.alts !== undefined) {
+    if (!deep) return '候補が入れ子になっている';
+    if (!Array.isArray(n.alts)) return '候補が配列でない';
+    for (const a of n.alts) { const w = noteProblem(a, false); if (w) return '候補の' + w; }
+  }
+  return '';
+}
+
+function rangeProblem(r, deep) {
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return '中身がない';
+  if (typeof r.id !== 'string' || !r.id) return 'id が無い';
+  if (!okStr(r.lawId) || !okStr(r.anchor)) return '法令や条項号の指し方が違う';
+  if (!okStr(r.text) || !okStr(r.color) || !okStr(r.memo)) return '中身が文字列でない';
+  if (!okNum(r.nth)) return '何番目かが数でない';
+  if (!okNum(r.updatedAt) || !okNum(r.deletedAt)) return '時刻が数でない';
+  if (!okVv(r.version)) return '版の形が違う';
+  if (r.alts !== undefined) {
+    if (!deep) return '候補が入れ子になっている';
+    if (!Array.isArray(r.alts)) return '候補が配列でない';
+    for (const a of r.alts) { const w = rangeProblem(a, false); if (w) return '候補の' + w; }
+  }
+  return '';
+}
+
+/*
  * 受け取った塊を検める。読めないものは読まない。
  *
  * JSON として読めるかだけでは足りない。形・版・型・鍵の重なりまで見る。
@@ -5671,19 +5741,25 @@ function validateSnapshot(o) {
 
   const seenN = new Set();
   for (const n of r.notes) {
-    if (!n || typeof n !== 'object') return no('注釈に中身のないものがある');
-    if (typeof n.key !== 'string' || !n.key) return no('鍵の無い注釈がある');
+    const w = noteProblem(n, true);
+    if (w) return no('読めない注釈がある（' + w + '）'
+      + (n && n.key ? ': ' + n.key : ''));
     if (seenN.has(n.key)) return no('同じ鍵の注釈が2つある: ' + n.key);
     seenN.add(n.key);
   }
   const seenR = new Set();
   for (const x of r.ranges) {
-    if (!x || typeof x !== 'object') return no('文言注釈に中身のないものがある');
-    if (typeof x.id !== 'string' || !x.id) return no('id の無い文言注釈がある');
+    const w = rangeProblem(x, true);
+    if (w) return no('読めない文言注釈がある（' + w + '）'
+      + (x && x.id ? ': ' + x.id : ''));
     if (seenR.has(x.id)) return no('同じ id の文言注釈が2つある: ' + x.id);
     seenR.add(x.id);
   }
-  if (r.lawOrder && !Array.isArray(r.lawOrder.ids)) return no('並び順の形が違う');
+  if (r.lawOrder) {
+    if (!Array.isArray(r.lawOrder.ids)) return no('並び順の形が違う');
+    if (!r.lawOrder.ids.every(x => typeof x === 'string')) return no('並び順に法令でないものがある');
+    if (!okVv(r.lawOrder.version)) return no('並び順の版の形が違う');
+  }
   return { ok: true, why: '', snapshot: o };
 }
 
