@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v70';
+const APP_VERSION = 'v71';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -3308,12 +3308,27 @@ function renderMarkList() {
    * 固定した版に付けた注釈は、元の法令とは別の住所になる。端末ごとに片方
    * しか持っていないと揃わないので、移せることを知らせる。
    */
-  const revCount = countRevisionNotes();
+  const rev = countRevisionNotes();
   const revBox = $('#rev-move-box');
   if (revBox) {
-    revBox.hidden = !revCount;
-    const n = $('#rev-move-count');
-    if (n) n.textContent = revCount + '件';
+    revBox.hidden = !(rev.moved || rev.missing.length);
+    const body = $('#rev-move-body');
+    const btn = $('#btn-rev-move');
+    if (rev.moved) {
+      if (body) {
+        body.textContent = '固定した版に付けた注釈が ' + rev.moved + '件あります。'
+          + '元の法令とは別のものとして扱われるため、ほかの端末と揃いません。';
+      }
+      if (btn) { btn.hidden = false; btn.textContent = '元の法令へ移す'; }
+    } else if (rev.missing.length) {
+      // 移す先が無い。何をすればよいかまで言う
+      if (body) {
+        body.textContent = '固定した版に付けた注釈があります。移すには、元の法令'
+          + '（' + rev.missing.join('、') + '）を先に取り込んでください。'
+          + '「＋ 追加」から法令名で検索できます。';
+      }
+      if (btn) btn.hidden = true;
+    }
   }
 
   /*
@@ -5356,11 +5371,30 @@ function planRevisionNoteMove(notes, ranges, laws, now) {
   return { notes: outNotes, ranges: outRanges, moved, skipped };
 }
 
-/** いくつ移せるか数える。知らせを出すかどうかの判断に使う。 */
+/*
+ * 固定版の注釈がいくつあり、そのうちいくつ移せるかを数える。
+ *
+ * 移せない理由はたいてい「元の法令を持っていない」である。そのときに
+ * 黙って隠れると、利用者からは何も起きていないように見える。実際にそうなった。
+ * 移せる数と、移せない数を分けて返す。
+ */
 function countRevisionNotes() {
   const plan = planRevisionNoteMove([...state.notes.values()],
     [...state.ranges.values()], state.laws, Date.now());
-  return plan.moved;
+  // 元の法令を持っていない固定版の住所を、名前を添えて挙げる
+  const missing = new Map();
+  const have = new Set(state.laws.map(l => l.lawId));
+  const scan = rec => {
+    if (isTomb(rec) || !isPinnedLawId(rec.lawId)) return;
+    const base = baseLawIdOf(rec.lawId);
+    if (have.has(base)) return;
+    const law = state.laws.find(l => l.lawId === rec.lawId);
+    const name = law ? (law.baseTitle || law.lawTitle) : base;
+    missing.set(base, name);
+  };
+  for (const n of state.notes.values()) scan(n);
+  for (const r of state.ranges.values()) scan(r);
+  return { moved: plan.moved, skipped: plan.skipped, missing: [...missing.values()] };
 }
 
 async function doRevisionNoteMove() {
