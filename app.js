@@ -4606,6 +4606,19 @@ const AP_CLIENT_ID = '866936668538-nclss2rol3u90rs0ujk2rg6a97u7kddc.apps.googleu
 const AP_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const AP_REDIRECT = location.origin + location.pathname;
 const AP_MARK = 'roppo.ap.mark';
+const AP_HINT = 'roppo.ap.hint';
+
+/*
+ * どのアカウントで認証するか。
+ *
+ * Google に複数ログインしていると、prompt=none では「どれか決められない」と
+ * 言われて interaction_required が返る。login_hint でアカウントを指定すると
+ * 決まるので、無画面での取り直しが通ることがある。
+ * 値はこの端末の localStorage にだけ置く。どこへも送らない（Google を除く）。
+ */
+function apHint() {
+  try { return localStorage.getItem(AP_HINT) || ''; } catch (e) { return ''; }
+}
 
 let apToken = null;            // メモリだけ。localStorage には置かない
 
@@ -4653,7 +4666,9 @@ async function apGo(silent) {
     + '&scope=' + encodeURIComponent(AP_SCOPE)
     + '&state=' + encodeURIComponent(state)
     + '&include_granted_scopes=true'
+    + (apHint() ? '&login_hint=' + encodeURIComponent(apHint()) : '')
     + (silent ? '&prompt=none' : '');
+  if (apHint()) apSay('アカウントを指定する: ' + apHint());
   apSay((silent ? '無画面で' : '') + '出発する: ' + AP_REDIRECT);
   location.href = u;
 }
@@ -4768,15 +4783,27 @@ function apPanel() {
     + '戻り先: <code>' + esc(AP_REDIRECT) + '</code></p>'
     + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'
     + '<button id="ap-go" class="primary">画面遷移で試す</button>'
+    + '<button id="ap-go2" class="mini">もう一度（同意が省かれるか）</button>'
     + '<button id="ap-silent" class="mini">無画面で取り直す</button>'
     + '<button id="ap-drive" class="mini">Drive を叩く</button>'
     + '<button id="ap-gis" class="mini">GIS を読む</button>'
     + '<button id="ap-gis-go" class="mini" disabled>ポップアップで試す</button>'
     + '<button id="ap-close" class="mini">閉じる</button></div>'
+    + '<p style="margin:0 0 10px">Google のアカウント（複数ログインしているとき）:<br>'
+    + '<input id="ap-hint" type="email" placeholder="Google のアカウント" '
+    + 'style="width:min(100%,320px);padding:6px;border:1px solid #ccc;border-radius:6px" '
+    + 'value="' + esc(apHint()) + '"> '
+    + '<button id="ap-hint-save" class="mini">覚える</button></p>'
     + '<pre id="ap-log" style="white-space:pre-wrap;word-break:break-all;'
     + 'background:rgba(0,0,0,.05);padding:10px;border-radius:8px;margin:0"></pre>';
   document.body.appendChild(d);
   $('#ap-go').onclick = () => apGo(false);
+  $('#ap-go2').onclick = () => apGo(false);
+  $('#ap-hint-save').onclick = () => {
+    const v = ($('#ap-hint').value || '').trim();
+    try { localStorage.setItem(AP_HINT, v); } catch (e) { /* 無くても動く */ }
+    apSay(v ? 'アカウントを覚えた: ' + v : 'アカウントの指定を外した');
+  };
   $('#ap-silent').onclick = () => apGo(true);
   $('#ap-drive').onclick = () => apCallDrive();
   $('#ap-gis').onclick = () => apGis();
