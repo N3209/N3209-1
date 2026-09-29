@@ -4846,12 +4846,30 @@ function driveRemote() {
       return await r.json();
     },
 
-    /** 古い世代を片付ける。自分の最新2つだけ残す。他の端末のものは触らない。 */
+    /*
+     * 古い世代を片付ける。自分の最新2つだけ残す。他の端末のものは触らない。
+     *
+     * 発行元の名前が空のもの（roppo--3.json）も片付ける。端末IDを読む前に
+     * 同期が走っていた頃の置き土産で、誰のものとも読めず、残しても使えない。
+     * 中身は手元のDBにあるものと同じなので、消して失うものはない。
+     */
     async sweep(writerId, keep) {
       const list = await this.listSnapshots();
       const mine = list.filter(f => f.writerId === writerId)
         .sort((a, b) => b.generation - a.generation);
       const drop = mine.slice(Math.max(1, keep || 2));
+
+      try {
+        const r = await fetch(DRIVE_API
+          + '?spaces=appDataFolder&pageSize=100&fields=files(id,name)',
+          { headers: auth() });
+        if (r.ok) {
+          const d = await r.json();
+          for (const f of (d.files || [])) {
+            if (/^roppo--\d+\.json$/.test(f.name || '')) drop.push({ id: f.id, name: f.name });
+          }
+        }
+      } catch (e) { /* 片付けられなくても害はない */ }
       for (const f of drop) {
         try {
           await fetch(DRIVE_API + '/' + encodeURIComponent(f.id),
@@ -4887,6 +4905,12 @@ async function syncOnce(remote, opts) {
   const o = opts || {};
   const say = o.onStep || (() => {});
   const out = { ok: false, why: '', read: 0, skipped: [], conflicts: 0, published: false };
+
+  /*
+   * 端末の名前が無いまま進まない。名前は版の項目名にもファイル名にもなるので、
+   * 空だと誰の編集か分からなくなり、置いたものも読めなくなる。
+   */
+  if (!deviceId) { out.why = '端末の準備ができていません'; return out; }
 
   // 1. 書きかけを確定する
   await flushSave();
@@ -5460,9 +5484,13 @@ async function loadDeviceId() {
 /** 版の各項目を読む。無ければ0。 */
 const vvAt = (v, id) => Number((v && v[id]) || 0);
 
-/** 版に出てくる端末の名前を全部。並びは決め打ちにする（下の vvKey を見よ）。 */
+/**
+ * 版に出てくる端末の名前を全部。並びは決め打ちにする（下の vvKey を見よ）。
+ * 空の名前は落とす。端末IDが無いまま書かれたものが混じることがある。
+ */
 function vvIds(a, b) {
-  return [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].sort();
+  return [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])]
+    .filter(Boolean).sort();
 }
 
 /*
@@ -5476,7 +5504,7 @@ function vvIds(a, b) {
 function vvKey(v) {
   const o = v || {};
   return Object.keys(o).sort()
-    .filter(k => Number(o[k]) > 0)
+    .filter(k => k && Number(o[k]) > 0)
     .map(k => k + ':' + Number(o[k]))
     .join('|');
 }
@@ -5512,10 +5540,14 @@ function vvMerge(a, b) {
   return out;
 }
 
-/** この端末の編集を1つ進めた版を返す。元の版は変えない。 */
-function vvBump(v, deviceId) {
+/**
+ * この端末の編集を1つ進めた版を返す。元の版は変えない。
+ * 名前が無いときは何もしない。空の名前を項目にすると、誰の編集か分からなくなる。
+ */
+function vvBump(v, id) {
   const out = { ...(v || {}) };
-  out[deviceId] = vvAt(out, deviceId) + 1;
+  if (!id) return out;
+  out[id] = vvAt(out, id) + 1;
   return out;
 }
 
@@ -6419,9 +6451,17 @@ function registerServiceWorker() {
   try { sheetTab = localStorage.getItem('roppo.sheetTab') || 'jump'; } catch (e) { /* 任意 */ }
   switchSheetTab(sheetTab);
   placeControls();
-  await resumeSync();         // Google から戻ってきたなら、同期の続きをやる
+  /*
+   * 端末IDと並び順を先に読む。
+   *
+   * 以前は resumeSync が先だったので、Google から戻ってきたときだけ
+   * 端末IDが空のまま同期が走った。名前が roppo--3.json のようになり、
+   * 読むときに弾かれて、いつまでも揃わなかった。
+   * 同期は「手元の状態が揃ってから」でなければ始められない。
+   */
   await loadDeviceId();
   await loadLawOrder();
+  await resumeSync();         // Google から戻ってきたなら、同期の続きをやる
   loadAmendState();
   await loadNotes();
   await loadRanges();
