@@ -15,6 +15,15 @@
 
 const API = 'https://laws.e-gov.go.jp/api/2';
 
+/*
+ * いま動いている版。sw.js の VERSION と同じ値を入れる。
+ *
+ * 不具合を追うたびに「手元はどの版か」が分からず、何度も回り道をした。
+ * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
+ * 確かめるので、片方だけ上げ忘れることはない。
+ */
+const APP_VERSION = 'v68';
+
 /* ---------------------------------------------------------------- 小道具 */
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -5141,9 +5150,11 @@ async function peekRemote() {
     const list = await driveRemote().listSnapshots();
     const ds = await loadDatasetId();
     const lines = [];
+    lines.push('アプリの版: ' + APP_VERSION);
     if (who) lines.push('繋がっているアカウント: ' + who);
     else lines.push('繋がっているアカウント: （分かりません）');
-    lines.push('この端末: ' + deviceId + (ds ? '　かたまり: ' + ds : '　かたまり: まだ無し'));
+    lines.push('この端末: ' + (deviceId || '（空！　古い版です）')
+      + (ds ? '　かたまり: ' + ds : '　かたまり: まだ無し'));
 
     /*
      * 名前で絞らずに、置いてあるものを生で見せる。
