@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v72';
+const APP_VERSION = 'v73';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -292,6 +292,16 @@ async function applyBulk({ laws, notes, ranges, lawOrder: order, meta }) {
   await txDone(t);
 }
 
+/*
+ * 注釈を書いた回数。
+ *
+ * 同期は「DBを読む → 突き合わせる → 書き戻す」の順で動く。この間に保存が
+ * 挟まると、その編集を古い値で潰してしまう（しかも同期は成功と出る）。
+ * 読む前と書く前でこの数が変わっていないことを確かめて、変わっていたら
+ * 読み直す。呼ばれた時点で増やすので、書き込みの最中も取りこぼさない。
+ */
+let localWrites = 0;
+
 const store = {
   applyBulk,
   allLaws: () => read('laws', s => s.getAll()),      // XML 込み。書き出しでだけ使う
@@ -302,13 +312,14 @@ const store = {
   getMeta: key => read('meta', s => s.get(key)),
   putMeta: (key, value) => write('meta', s => s.put({ key, value })),
   allNotes: () => read('notes', s => s.getAll()),
-  putNote: rec => write('notes', s => s.put(rec)),
-  delNote: key => write('notes', s => s.delete(key)),        // 本当に消す。掃除と試験用
-  tombNote: rec => write('notes', s => s.put(rec)),          // 消した印を書く
+  getNote: key => read('notes', s => s.get(key)),   // 墓石も返る。版を継ぐのに要る
+  putNote: rec => { localWrites++; return write('notes', s => s.put(rec)); },
+  delNote: key => { localWrites++; return write('notes', s => s.delete(key)); },
+  tombNote: rec => { localWrites++; return write('notes', s => s.put(rec)); },
   allRanges: () => read('ranges', s => s.getAll()),
-  putRange: rec => write('ranges', s => s.put(rec)),
-  delRange: id => write('ranges', s => s.delete(id)),        // 本当に消す。掃除と試験用
-  tombRange: rec => write('ranges', s => s.put(rec)),        // 消した印を書く
+  putRange: rec => { localWrites++; return write('ranges', s => s.put(rec)); },
+  delRange: id => { localWrites++; return write('ranges', s => s.delete(id)); },
+  tombRange: rec => { localWrites++; return write('ranges', s => s.put(rec)); },
 };
 
 /* -------------------------------------------------------------- e-Gov API */
@@ -2428,6 +2439,14 @@ function openRangePopover(id) {
   `;
 
   wireConflict(body, rec, async solved => {
+    if (isTomb(solved)) {
+      await store.tombRange(solved);
+      state.ranges.delete(solved.id);
+      paintRanges();
+      renderMarkList();
+      closePopover();
+      return;                          // 消したものの画面は開き直さない
+    }
     await store.putRange(solved);
     state.ranges.set(solved.id, solved);
     paintRanges();
@@ -3418,8 +3437,15 @@ function renderNotePane() {
 
   wireConflict(body, note, async solved => {
     // 選んだ中身で置き換える。版は resolveConflict が組んである
-    await store.putNote(solved);
-    state.notes.set(solved.key, solved);
+    if (isTomb(solved)) {
+      // 「消した方」を選んだ。消した印として書き、画面からは外す
+      await store.tombNote(solved);
+      state.notes.delete(solved.key);
+      closePopover();
+    } else {
+      await store.putNote(solved);
+      state.notes.set(solved.key, solved);
+    }
     paintNotes();
     renderMarkList();
     renderNotePane();
@@ -3556,8 +3582,20 @@ function renderNotePane() {
  */
 async function saveNote(note) {
   note.updatedAt = Date.now();
-  // この端末の編集を1つ進める。前後は時計ではなくこれで決める
-  note.version = vvBump(note.version, deviceId);
+  /*
+   * 前の版を引き継いでから1つ進める。
+   *
+   * 消した印（墓石）は state.notes に載せていないので、同じ場所に書き直すと
+   * 版が 1 から数え直しになる。ところが他の端末には消した印がもっと進んだ版で
+   * 残っているため、次の同期では「消した」が勝ち、書き直した中身が消える。
+   * DBの記録は墓石も返すので、そこから継ぐ。
+   */
+  let base = note.version;
+  try {
+    const old = await store.getNote(note.key);
+    if (old) base = vvMerge(base, old.version);
+  } catch (e) { /* 読めなくても保存は続ける。版が戻るだけで、消しはしない */ }
+  note.version = vvBump(base, deviceId);
   try {
     if (!note.tags.length && !(note.memo || '').trim()
       && !(note.summary || '').trim() && !note.color) {
@@ -5016,15 +5054,33 @@ async function syncOnce(remote, opts) {
   }
   say(out.read + '件を読んだ');
 
-  // 3. いまのDBを読み直してマージする
-  const mine = buildSnapshot({
-    notes: await store.allNotes(),
-    ranges: await store.allRanges(),
-    order: lawOrderRec,
-    datasetId, writerId: deviceId, generation: 0,
-  });
-  let merged = mine.records;
-  for (const s of incoming) merged = mergeSnapshots({ records: merged }, s);
+  /*
+   * 3. いまのDBを読み直してマージする
+   *
+   * 読んでから書き戻すまでに保存が挟まると、その編集を古い値で潰す。通信は
+   * もう終わっているので、ここは一息で済ませられる。読む前と突き合わせ後で
+   * 書き込み回数が変わっていないことを確かめ、変わっていたら読み直す。
+   * 突き合わせから applyBulk までは await を挟まない（挟むと同じ隙間ができる）。
+   */
+  let merged = null;
+  for (let tries = 0; tries < 3 && !merged; tries++) {
+    await flushSave();
+    const before = localWrites;
+    const notes = await store.allNotes();
+    const ranges = await store.allRanges();
+    if (localWrites !== before) continue;        // 読んでいる間に書かれた
+    const mine = buildSnapshot({
+      notes, ranges, order: lawOrderRec,
+      datasetId, writerId: deviceId, generation: 0,
+    });
+    let m = mine.records;
+    for (const s of incoming) m = mergeSnapshots({ records: m }, s);
+    merged = m;
+  }
+  if (!merged) {
+    out.why = '編集中のため取り込めませんでした。少し待ってからもう一度どうぞ';
+    return out;
+  }
   out.conflicts = merged.notes.filter(hasConflict).length
     + merged.ranges.filter(hasConflict).length;
 
@@ -5044,6 +5100,16 @@ async function syncOnce(remote, opts) {
   await loadNotes();
   await loadRanges();
   await refreshLawList();
+  /*
+   * 開いている編集欄は同期前のオブジェクトを掴んでいる。作り直さないと、
+   * 次にそこを編集したときに取り込んだ版や候補を落とす。
+   * ただし書きかけを消さないよう、入力中は触らない。
+   */
+  if (!pendingSave && !pendingRange
+    && !(document.activeElement && document.activeElement.closest
+      && document.activeElement.closest('#popover'))) {
+    renderNotePane();
+  }
   say('取り込んだ');
 
   // 4. 自分の塊を置く
@@ -5853,8 +5919,22 @@ function mergeRecord(left, right) {
     return out;
   }
 
-  // 衝突。表に出す方を決め、もう片方は alts に積む
-  const [shown, hidden] = pickShown(left, right);
+  /*
+   * 衝突。表に出す方を決め、もう片方は alts に積む。
+   *
+   * ただし「消した」と「直した」がぶつかったときだけは、時計を見ずに
+   * 生きている方を表に出す。墓石を表に出すと、その注釈は画面からも
+   * 「別の編集があるもの」の一覧からも消え、alts にある生きた中身を選ぶ道が
+   * どこにも無くなる。生きている方を出しておけば中身は見えるし、消し直すのは
+   * 一手で済む。取り返しがつく方に倒す。
+   *
+   * これは衝突のときだけの決まりである。版で前後が決まる場合や、版を持たない
+   * 古いバックアップとの比較にまで広げてはいけない。広げると、消したものが
+   * 古いバックアップから復活する。
+   */
+  const [shown, hidden] = isTomb(left) !== isTomb(right)
+    ? (isTomb(left) ? [right, left] : [left, right])
+    : pickShown(left, right);
   const { alts: _a, ...shownClean } = shown;
   const { alts: _b, ...hiddenClean } = hidden;
   const alts = pruneAlts([hiddenClean, ...collectAlts(left, right)], shownClean);
