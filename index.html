@@ -299,8 +299,12 @@
     </p>
     <div class="row">
       <button type="button" id="btn-sync" class="primary">同期する</button>
+      <button type="button" id="btn-peek" class="mini">置いてあるものを見る</button>
       <span id="sync-state" class="saved-at"></span>
     </div>
+    <pre id="sync-peek" class="hint" hidden
+         style="white-space:pre-wrap;word-break:break-all;margin:8px 0 0;
+                background:rgba(0,0,0,.05);padding:8px;border-radius:6px"></pre>
     <p class="hint" style="margin:8px 0 0">
       Google のアカウント（複数ログインしているとき）<br>
       <input id="sync-account" type="text" placeholder="どのアカウントで接続するか"

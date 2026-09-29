@@ -5006,7 +5006,11 @@ async function syncOnce(remote, opts) {
 function syncSummary(r) {
   if (!r.ok) return r.why || '同期できませんでした';
   const parts = ['同期しました'];
-  if (r.read) parts.push('他の端末 ' + r.read + '件を取り込み');
+  /*
+   * 0件でも言う。黙っていると「取り込まれたのか、相手が居ないのか」が
+   * 分からない。実際にそこで詰まった。
+   */
+  parts.push(r.read ? '他の端末 ' + r.read + '件を取り込み' : '他の端末のものは見つかりません');
   if (r.conflicts) parts.push('別々に直したものが ' + r.conflicts + '件（両方残しました）');
   if (r.skipped.length) parts.push('別のかたまり ' + r.skipped.length + '件は混ぜていません');
   return parts.join('　/　');
@@ -5066,12 +5070,49 @@ async function resumeSync() {
     return;
   }
   if (resume === 'sync') await runSync();
+  else if (resume === 'peek') await peekRemote();
   else toast('Google に接続しました');
 }
 
 function setSyncState(s) {
   const el = $('#sync-state');
   if (el) el.textContent = s || '';
+}
+
+/*
+ * ドライブに何が置いてあるかを見る。同期はしない。
+ *
+ * 取り込み0件のとき、原因が「相手がまだ置いていない」のか「別のアカウントを
+ * 見ている」のかが分からなかった。置いてあるものを見せれば切り分けられる。
+ */
+async function peekRemote() {
+  if (!navigator.onLine) { toast('通信できません'); return; }
+  if (!gAlive()) { toast('Google に接続します…'); gGo('peek'); return; }
+  const box = $('#sync-peek');
+  if (box) { box.hidden = false; box.textContent = '調べています…'; }
+  try {
+    const list = await driveRemote().listSnapshots();
+    const ds = await loadDatasetId();
+    const lines = [];
+    lines.push('この端末: ' + deviceId + (ds ? '　かたまり: ' + ds : '　かたまり: まだ無し'));
+    if (!list.length) {
+      lines.push('置いてあるもの: なし');
+      lines.push('（相手がまだ同期していないか、別の Google アカウントを見ています）');
+    } else {
+      lines.push('置いてあるもの ' + list.length + '件:');
+      const by = new Map();
+      for (const f of list) {
+        const cur = by.get(f.writerId);
+        if (!cur || f.generation > cur) by.set(f.writerId, f.generation);
+      }
+      for (const [w, g] of by) {
+        lines.push('  ' + w + '　最新の世代 ' + g + (w === deviceId ? '　（この端末）' : ''));
+      }
+    }
+    if (box) box.textContent = lines.join('\n');
+  } catch (e) {
+    if (box) box.textContent = '調べられません: ' + (e && e.message ? e.message : e);
+  }
 }
 
 /** 「最後に同期: …」を出す。 */
@@ -5995,6 +6036,7 @@ function wire() {
   });
 
   $('#btn-sync').onclick = () => doSync();
+  $('#btn-peek').onclick = () => peekRemote();
   $('#sync-account').value = gAccount();
   $('#sync-account-save').onclick = () => {
     setGAccount($('#sync-account').value);
