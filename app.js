@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v74';
+const APP_VERSION = 'v76';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -2551,10 +2551,56 @@ function paintNotesIn(pane) {
     if (n.lawId !== pane.current.lawId) continue;
     const el = findAnchorEl(n.anchor, pane);
     if (!el) continue;
-    if (n.color) el.classList.add('mk', 'mk-' + n.color);
-    if (n.tags && n.tags.length) insertTags(el, n.tags);
-    if ((n.summary || '').trim()) insertSummary(el, n.summary);
-    if ((n.memo || '').trim()) insertMemo(el, n.memo);
+    applyNoteTo(el, n);
+  }
+}
+
+/** その注釈が持っている差し込みだけを外す（入れ子の中に入っていても引ける）。 */
+function dropOwned(el, cls, anchor) {
+  for (const x of el.querySelectorAll(cls + '[data-for="' + attrEsc(anchor) + '"]')) x.remove();
+}
+
+/**
+ * 1つの条項号に、その注釈の見た目を当てる。n が無ければ外す。
+ * paintNotesIn と repaintNote が同じ道を通るように、ここに集めておく。
+ */
+function applyNoteTo(el, n) {
+  const anchor = el.dataset.anchor || '';
+
+  el.classList.remove('mk');
+  for (const c of MARK_COLORS) el.classList.remove('mk-' + c.key);
+  if (n && n.color) el.classList.add('mk', 'mk-' + n.color);
+
+  if (n && (n.tags || []).length) insertTags(el, n.tags);
+  else dropOwned(el, '.inline-tags', anchor);
+
+  /*
+   * 前メモは insertSummary が必ず新しく作るので、すでにあるものは中身だけ
+   * 書き換える。外して付け直すと、打っている途中に差し込み位置が飛ぶ。
+   */
+  const sum = String((n && n.summary) || '').trim();
+  const had = el.querySelector(':scope > .note-summary');
+  if (sum) { if (had) had.textContent = sum; else insertSummary(el, sum); }
+  else if (had) had.remove();
+
+  const memo = String((n && n.memo) || '').trim();
+  if (memo) insertMemo(el, memo);
+  else dropOwned(el, '.memo-inline', anchor);
+}
+
+/*
+ * 1つの条項号ぶんだけ塗り直す。
+ *
+ * タグを1つ付けるたびに、開いている法令の注釈を全部外して付け直していた。
+ * 外す量そのものより、そのあとに配置を計算し直す量が効く。会社法は要素が
+ * 2万・文字が75万あり、iPhone では一手に数秒かかっていた。触ったところだけ
+ * 触る。ほかの条項号の見た目は、そもそも変わっていない。
+ */
+function repaintNote(lawId, anchor) {
+  for (const pane of livePanes()) {
+    if (!pane.current || pane.current.lawId !== lawId) continue;
+    const el = findAnchorEl(anchor, pane);
+    if (el) applyNoteTo(el, state.notes.get(noteKey(lawId, anchor)));
   }
 }
 
@@ -3623,8 +3669,14 @@ async function saveNote(note) {
   }
   renderMarkList();
   renderFilterPicker();
-  paintNotes();
-  paintRanges();
+  /*
+   * 触った条項号だけを塗り直す。
+   *
+   * 文言注釈（paintRanges）はここでは触らない。条項号のタグ・メモは
+   * textMapOf が本文から外しているので、文言注釈の位置に影響しない。
+   * 毎回すべての印を外して包み直していたが、まるごと無駄だった。
+   */
+  repaintNote(note.lawId, note.anchor);
   if (state.selected) {
     const el = $(`[data-anchor="${CSS.escape(state.selected)}"]`, P().el);
     if (el) el.classList.add('sel');
@@ -3655,39 +3707,71 @@ function paintRanges() {
   renderOrphans();
 }
 
-function paintRangesIn(pane) {
-  for (const m of $$('mark[data-range-id]', pane.el)) {
+/** 包んである印を、その場所から外して元の文に戻す。 */
+function stripRangeMarks(root) {
+  for (const m of $$('mark[data-range-id]', root)) {
     const parent = m.parentNode;
     while (m.firstChild) parent.insertBefore(m.firstChild, m);
     m.remove();
     parent.normalize();
   }
   // 区切りの印は中身を持たないので、そのまま外す。片付けを忘れると重なって増える。
-  for (const m of $$('span[data-slash-id]', pane.el)) {
+  for (const m of $$('span[data-slash-id]', root)) {
     const parent = m.parentNode;
     m.remove();
     parent.normalize();
   }
+}
+
+/** 文言注釈を1件、その条項号の中に置く。置けなければ false（要確認行き）。 */
+function placeRange(el, r) {
+  const map = textMapOf(el);
+  // 指定の出現が無いときに最初の一致へ寄せると、別の文言に注釈が移ってしまう。
+  // 「黙って別の場所に付けない」方針のとおり、見つからなければ要確認にする。
+  const at = nthIndexOf(map.text, r.text, r.nth || 1);
+  if (at < 0) return false;
+  if (isSlash(r)) {
+    // 「。」の直後に置く。文言そのものは包まない。
+    placePointInMap(el, at + r.text.length,
+      'slash' + (r.kind === 'dslash' ? ' dslash' : ''), r.id, map);
+  } else {
+    wrapInMap(el, at, at + r.text.length,
+      'rng' + (r.color ? ' rng-' + r.color : '') + (r.memo ? ' has-memo' : ''), r.id);
+  }
+  return true;
+}
+
+function paintRangesIn(pane) {
+  stripRangeMarks(pane.el);
   if (!pane.current) return;
 
   for (const r of state.ranges.values()) {
     if (r.lawId !== pane.current.lawId) continue;
     const el = findAnchorEl(r.anchor, pane);
-    if (!el) { state.orphanRanges.push(r); continue; }
-    const map = textMapOf(el);
-    // 指定の出現が無いときに最初の一致へ寄せると、別の文言に注釈が移ってしまう。
-    // 「黙って別の場所に付けない」方針のとおり、見つからなければ要確認にする。
-    const at = nthIndexOf(map.text, r.text, r.nth || 1);
-    if (at < 0) { state.orphanRanges.push(r); continue; }
-    if (isSlash(r)) {
-      // 「。」の直後に置く。文言そのものは包まない。
-      placePointInMap(el, at + r.text.length,
-        'slash' + (r.kind === 'dslash' ? ' dslash' : ''), r.id, map);
-    } else {
-      wrapInMap(el, at, at + r.text.length,
-        'rng' + (r.color ? ' rng-' + r.color : '') + (r.memo ? ' has-memo' : ''), r.id);
+    if (!el || !placeRange(el, r)) state.orphanRanges.push(r);
+  }
+}
+
+/*
+ * 1つの条項号ぶんの文言注釈だけを塗り直す（repaintNote と同じ理由）。
+ *
+ * 要確認の一覧は全体を見て作るので、この条項号ぶんだけ入れ替える。
+ */
+function repaintRangesAt(lawId, anchor) {
+  const panes = livePanes().filter(p => p.current && p.current.lawId === lawId);
+  if (!panes.length) return;          // 開いていない法令。要確認の一覧も動かさない
+
+  state.orphanRanges = state.orphanRanges
+    .filter(r => !(r.lawId === lawId && r.anchor === anchor));
+  for (const pane of panes) {
+    const el = findAnchorEl(anchor, pane);
+    if (el) stripRangeMarks(el);          // 先に外してから置く。順を逆にすると消える
+    for (const r of state.ranges.values()) {
+      if (r.lawId !== lawId || r.anchor !== anchor) continue;
+      if (!el || !placeRange(el, r)) state.orphanRanges.push(r);
     }
   }
+  renderOrphans();
 }
 
 
@@ -3908,7 +3992,7 @@ async function saveRange(rec) {
   }
   saveFailures.delete('range:' + rec.id);         // 保存できたので、前の失敗は解く
   state.ranges.set(rec.id, rec);
-  paintRanges();
+  repaintRangesAt(rec.lawId, rec.anchor);         // 触った条項号だけ（repaintNote と同じ理由）
   renderMarkList();
   renderFilterPicker();
   return true;
@@ -3919,7 +4003,8 @@ async function deleteRange(id) {
   const now = Date.now();
   await store.tombRange(rangeTomb(rec, now, vvBump(rec.version, deviceId)));
   state.ranges.delete(id);
-  paintRanges();
+  if (rec.lawId && rec.anchor) repaintRangesAt(rec.lawId, rec.anchor);
+  else paintRanges();                             // どこの印か分からないときは全部見る
   renderMarkList();
   renderFilterPicker();
   closePopover();
@@ -6256,6 +6341,99 @@ function openExportDialog() {
   $('#dlg-export').showModal();
 }
 
+/* ------------------------------------------------------ 動きの重さを測る */
+
+/*
+ * 「iPhone で本文をスクロールすると重い」を、手元の推測で塞ごうとしても当たらない。
+ * 実機で数を採る。
+ *
+ * 分けて見たいのは三つ。
+ *   本文の大きさ    高さ・要素数・文字数。長い法令ほど1枚の紙が縦に伸びる。
+ *   一手ぶんの処理  タグを1つ付けるたびに走る処理を、関数ごとに測る。
+ *   描き直しの間隔  指で動かしている間の間隔。詰まっていなければ、遅いのは
+ *                   本文を絵にする側であって、こちらの処理ではない。
+ *
+ * どこに手を入れるかが、この三つの並びで決まる。
+ */
+async function measurePerf() {
+  const out = $('#perf-out');
+  const pane = P();
+  out.hidden = false;
+  if (!pane.current) { out.textContent = '法令を開いてから押してください'; return; }
+
+  const el = pane.el;
+  const n = sel => el.querySelectorAll(sel).length;
+  const lines = [];
+  lines.push('版 ' + APP_VERSION
+    + '　画面 ' + window.innerWidth + '×' + window.innerHeight
+    + '　倍率 ' + (window.devicePixelRatio || 1));
+  lines.push('法令: ' + (pane.current.lawTitle || pane.current.lawId));
+  lines.push('本文の高さ ' + Math.round(el.scrollHeight).toLocaleString() + 'px'
+    + '（画面 ' + Math.round(el.scrollHeight / (el.clientHeight || 1)) + '枚分）');
+  lines.push('要素 ' + n('*').toLocaleString()
+    + '　文字 ' + (el.textContent || '').length.toLocaleString());
+  lines.push('この法令の注釈 ' + [...state.notes.values()]
+    .filter(x => x.lawId === pane.current.lawId).length
+    + '　文言注釈 ' + [...state.ranges.values()]
+      .filter(x => x.lawId === pane.current.lawId).length);
+  lines.push('印 ' + n('mark') + '　メモ ' + n('.memo-inline')
+    + '　前メモ ' + n('.note-summary') + '　タグ ' + n('.inline-tags')
+    + '　参照リンク ' + n('a.ref'));
+
+  /*
+   * タグを1つ付けると走る処理を、順に測る。
+   * 5秒かかるという申し出が、どの行のことなのかをここで切り分ける。
+   */
+  const ms = (name, fn) => {
+    const t = performance.now();
+    try { fn(); } catch (e) { return name + ' ✗' + (e && e.message ? '(' + e.message + ')' : ''); }
+    return name + ' ' + (performance.now() - t).toFixed(1) + 'ms';
+  };
+  lines.push('');
+  lines.push('タグを1つ付けるときに走る処理');
+  lines.push('  ' + ms('本文の塗り直し', () => paintNotes())
+    + '　' + ms('文言の塗り直し', () => paintRanges()));
+  lines.push('  ' + ms('印とメモの一覧', () => renderMarkList())
+    + '　' + ms('絞り込みの札', () => renderFilterPicker()));
+  lines.push('  ' + ms('注釈欄', () => renderNotePane())
+    + '　' + ms('見出しの位置', () => measureHeadings(pane)));
+  // 配置を一度読み直させる。大きな本文ほど、ここが効いてくる
+  lines.push('  ' + ms('配置の読み直し1回', () => {
+    el.style.setProperty('--perf-probe', String(Math.random()));
+    void el.scrollHeight;
+    el.style.removeProperty('--perf-probe');
+  }));
+
+  out.textContent = lines.join('\n') + '\n\nいま本文を指で動かしてください（3秒）…';
+
+  const t = [];
+  const start = performance.now();
+  await new Promise(done => {
+    const tick = now => {
+      t.push(now);
+      if (now - start < 3000) requestAnimationFrame(tick); else done();
+    };
+    requestAnimationFrame(tick);
+  });
+
+  const gaps = [];
+  for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
+  gaps.sort((a, b) => a - b);
+  const at = p => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))] : 0);
+  const slow = gaps.filter(g => g > 32).length;
+  const moved = Math.round(Math.abs(el.scrollTop - (pane._perfTop || 0)));
+
+  lines.push('');
+  lines.push('描き直しの間隔（' + gaps.length + '回）');
+  lines.push('  真ん中 ' + at(0.5).toFixed(1) + 'ms'
+    + '　重い方の1割 ' + at(0.9).toFixed(1) + 'ms'
+    + '　最悪 ' + (gaps.length ? gaps[gaps.length - 1].toFixed(1) : '0') + 'ms');
+  lines.push('  32msを超えた回 ' + slow
+    + '（' + Math.round((slow / (gaps.length || 1)) * 100) + '%）');
+  lines.push('  この間に動いた量 ' + moved.toLocaleString() + 'px');
+  out.textContent = lines.join('\n');
+}
+
 /* ---------------------------------------------------------- 法令の追加 */
 
 async function searchAndShow() {
@@ -6488,6 +6666,10 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
+  $('#btn-perf').onclick = () => {
+    P()._perfTop = P().el.scrollTop;      // どれだけ動かしたかを添えるため
+    measurePerf();
+  };
   $('#btn-rev-move').onclick = () => doRevisionNoteMove();
   $('#btn-join').onclick = () => doJoin();
   $('#btn-pick').onclick = () => {
