@@ -270,7 +270,10 @@ async function applyBulk({ laws, notes, ranges, lawOrder: order, meta }) {
     }
     for (const n of notes || []) os.notes.put(n);
     for (const r of ranges || []) os.ranges.put(r);
-    if (Array.isArray(order)) os.meta.put({ key: LAW_ORDER_KEY, value: order });
+    if (Array.isArray(order)) {
+    os.meta.put({ key: LAW_ORDER_KEY,
+      value: { ids: order, updatedAt: Date.now(), version: lawOrderRec.version || {} } });
+  }
     for (const [k, v] of Object.entries(meta || {})) os.meta.put({ key: k, value: v });
   } catch (err) {
     try { t.abort(); } catch (e) { /* すでに終わっているなら、そのまま */ }
@@ -1299,6 +1302,11 @@ function wireLawDrag() {
  */
 const LAW_ORDER_KEY = 'roppo.lawOrder';
 let lawOrder = [];
+/*
+ * 並び順も同期の対象なので、注釈と同じ形（版と時刻を持つレコード）で持つ。
+ * 中身は法令IDの配列ひとつなので、レコードは1件だけである。
+ */
+let lawOrderRec = { ids: [], updatedAt: 0, version: {} };
 
 /*
  * 並び順を IndexedDB から読む。
@@ -1309,26 +1317,42 @@ let lawOrder = [];
  * （古い版のアプリで開いたときに並びが失われないように）。
  */
 async function loadLawOrder() {
-  let ids = null;
+  let rec = null;
   try {
-    const rec = await store.getMeta(LAW_ORDER_KEY);
-    if (rec && Array.isArray(rec.value)) ids = rec.value;
+    const got = await store.getMeta(LAW_ORDER_KEY);
+    if (got) rec = got.value;
   } catch (e) { /* 読めなければ下で localStorage を見る */ }
 
-  if (ids === null) {
+  /*
+   * 3つの形を受ける。
+   *   {ids, updatedAt, version}  いまの形
+   *   [ ... ]                    版を入れる前の形（配列だけ）
+   *   無い                       localStorage から拾う（さらに前の形）
+   */
+  if (rec && Array.isArray(rec.ids)) {
+    lawOrderRec = { ids: rec.ids, updatedAt: rec.updatedAt || 0, version: rec.version || {} };
+  } else if (Array.isArray(rec)) {
+    lawOrderRec = { ids: rec, updatedAt: 0, version: {} };
+    try { await store.putMeta(LAW_ORDER_KEY, lawOrderRec); } catch (e) { /* 次回また */ }
+  } else {
+    let ids = [];
     try { ids = JSON.parse(localStorage.getItem(LAW_ORDER_KEY) || '[]'); }
     catch (e) { ids = []; }
     if (!Array.isArray(ids)) ids = [];
+    lawOrderRec = { ids, updatedAt: 0, version: {} };
     // 移し替えは一度だけ。空でも書いておかないと、毎回ここを通る
-    try { await store.putMeta(LAW_ORDER_KEY, ids); } catch (e) { /* 書けなくても読める */ }
+    try { await store.putMeta(LAW_ORDER_KEY, lawOrderRec); } catch (e) { /* 書けなくても読める */ }
   }
+  const ids = lawOrderRec.ids;
   lawOrder = ids;
 }
 
 function saveLawOrder(ids) {
   lawOrder = ids;
+  // 並べ替えも1つの編集。版を進めて、前後を時計で決めなくて済むようにする
+  lawOrderRec = { ids, updatedAt: Date.now(), version: vvBump(lawOrderRec.version, deviceId) };
   // IndexedDB を正本にする。localStorage にも書いて、古い版のアプリでも読めるようにする
-  store.putMeta(LAW_ORDER_KEY, ids).catch(() => { /* 下の localStorage が残る */ });
+  store.putMeta(LAW_ORDER_KEY, lawOrderRec).catch(() => { /* 下の localStorage が残る */ });
   try { localStorage.setItem(LAW_ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* 任意 */ }
 }
 
@@ -2376,6 +2400,7 @@ function openRangePopover(id) {
 
   const body = $('#notes-body');
   body.innerHTML = `
+    ${conflictHtml(rec)}
     <div class="note-quote">${esc(rec.text)}</div>
     <p class="note-label">色</p>
     <div class="palette" id="palette"></div>
@@ -2386,6 +2411,14 @@ function openRangePopover(id) {
       <span class="saved-at" id="saved-at"></span>
     </div>
   `;
+
+  wireConflict(body, rec, async solved => {
+    await store.putRange(solved);
+    state.ranges.set(solved.id, solved);
+    paintRanges();
+    renderMarkList();
+    openRangePopover(solved.id);
+  });
 
   const palette = $('#palette');
   const paint = () => {
@@ -3262,6 +3295,24 @@ function renderMarkList() {
       c.key === 'ul' ? '下線' : `${c.label}のマーク`);
     ml.appendChild(li);
   }
+  /*
+   * 別々に直したものは、放っておくと気づけない。専用の行で数を出す。
+   * 押せばその一覧が出るので、そこから開いて決められる。
+   */
+  const cfCount = [...state.notes.values()].filter(hasConflict).length
+    + [...state.ranges.values()].filter(hasConflict).length;
+  if (cfCount) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="sw" style="background:var(--mk-red-b,#c00)"></span>'
+      + `<span>別の編集があるもの</span><span class="n">${cfCount}</span>`;
+    li.onclick = () => showMarkResults(m => {
+      const r = m.kind === 'note'
+        ? state.notes.get(m.lawId + ':' + m.anchor) : state.ranges.get(m.id);
+      return hasConflict(r);
+    }, '別の編集があるもの');
+    ml.appendChild(li);
+  }
+
   // 区切りは色もメモも持たないので、専用の行が無いと一覧から辿れない
   const slashCount = marks.filter(m => m.kind === 'slash').length;
   if (slashCount) {
@@ -3314,6 +3365,7 @@ function renderNotePane() {
   body.innerHTML = `
     ${dupHere ? '<div class="note-dup">この位置は、同じ番号の別の条項と重なっています。'
       + 'ここに付けた注釈は、どちらを指すか決まりません。</div>' : ''}
+    ${conflictHtml(note)}
     <div class="note-quote">${esc(entry ? entry.text : '')}</div>
     <p class="note-label">マーク</p>
     <div class="palette" id="palette"></div>
@@ -3327,6 +3379,15 @@ function renderNotePane() {
     <textarea id="memo-input" placeholder="詳しく書き足したいこと"></textarea>
     <div class="saved-at" id="saved-at"></div>
   `;
+
+  wireConflict(body, note, async solved => {
+    // 選んだ中身で置き換える。版は resolveConflict が組んである
+    await store.putNote(solved);
+    state.notes.set(solved.key, solved);
+    paintNotes();
+    renderMarkList();
+    renderNotePane();
+  });
 
   const palette = $('#palette');
   const paintPalette = () => {
@@ -4860,6 +4921,150 @@ async function authProbe() {
   if (back) await apReturned(frag);
 }
 
+
+/* ----------------------------------------------------- 同期：手順 */
+
+/*
+ * 同期の段取り。通信先（remote）は外から渡す。
+ *
+ * remote は3つだけ持つ。Drive でも、試験の偽物でも、同じ形にする。
+ *   listSnapshots()        置いてあるものの一覧（{id, writerId, generation}）
+ *   readSnapshot(id)       中身を1つ読む
+ *   createSnapshot(snap)   新しく1つ置く（既にあるものは書き換えない）
+ *
+ * 段取り
+ *   1. 書きかけを確定する。保存できていないなら進まない
+ *   2. 一覧を取り、他の端末のものを最後まで読んで検める
+ *   3. その時点のDBを読み直してマージし、一度のトランザクションで反映する
+ *   4. 自分の塊を作り、世代番号を1つ進めて置く
+ *   5. 置けたら、その世代を確認済みにする
+ *
+ * 通信をトランザクションの中で待たない。取得と検証は先に済ませる。
+ * DBに入れてから置くのに失敗しても、同じ状態からやり直せる。
+ */
+async function syncOnce(remote, opts) {
+  const o = opts || {};
+  const say = o.onStep || (() => {});
+  const out = { ok: false, why: '', read: 0, skipped: [], conflicts: 0, published: false };
+
+  // 1. 書きかけを確定する
+  await flushSave();
+  if (!savesAreClean()) {
+    out.why = '保存できていないものが ' + unsavedCount() + '件あります';
+    return out;
+  }
+  say('置いてあるものを調べる');
+
+  // 2. 一覧を取り、他の端末のものを読む
+  let list;
+  try { list = await remote.listSnapshots(); }
+  catch (e) { out.why = '一覧を取れません: ' + (e && e.message ? e.message : e); return out; }
+  if (!Array.isArray(list)) { out.why = '一覧の形が違います'; return out; }
+
+  const datasetId = await loadDatasetId();
+  // 端末ごとに、いちばん新しい世代だけ読む
+  const newest = new Map();
+  for (const f of list) {
+    if (!f || typeof f.writerId !== 'string') continue;
+    if (f.writerId === deviceId) continue;          // 自分のものは読まない
+    const cur = newest.get(f.writerId);
+    if (!cur || Number(f.generation || 0) > Number(cur.generation || 0)) newest.set(f.writerId, f);
+  }
+
+  const incoming = [];
+  for (const f of newest.values()) {
+    let raw;
+    try { raw = await remote.readSnapshot(f.id); }
+    catch (e) {
+      // 読めないものがあったら止める。空として扱うと、こちらの墓石が相手を消す
+      out.why = '読めないものがあります（' + f.writerId + '）: '
+        + (e && e.message ? e.message : e);
+      return out;
+    }
+    const v = validateSnapshot(raw);
+    if (!v.ok) { out.why = '中身が読めません（' + f.writerId + '）: ' + v.why; return out; }
+    if (v.snapshot.datasetId && datasetId && v.snapshot.datasetId !== datasetId) {
+      out.skipped.push(f.writerId);                  // 別のかたまり。混ぜない
+      continue;
+    }
+    incoming.push(v.snapshot);
+    out.read++;
+  }
+  say(out.read + '件を読んだ');
+
+  // 3. いまのDBを読み直してマージする
+  const mine = buildSnapshot({
+    notes: await store.allNotes(),
+    ranges: await store.allRanges(),
+    order: lawOrderRec,
+    datasetId, writerId: deviceId, generation: 0,
+  });
+  let merged = mine.records;
+  for (const s of incoming) merged = mergeSnapshots({ records: merged }, s);
+  out.conflicts = merged.notes.filter(hasConflict).length
+    + merged.ranges.filter(hasConflict).length;
+
+  try {
+    await store.applyBulk({
+      notes: merged.notes,
+      ranges: merged.ranges,
+      lawOrder: merged.lawOrder.ids,
+      meta: { [LAW_ORDER_KEY]: merged.lawOrder },
+    });
+  } catch (e) {
+    out.why = '取り込めません（何も変えていません）: ' + (e && e.message ? e.message : e);
+    return out;
+  }
+  lawOrderRec = merged.lawOrder;
+  lawOrder = merged.lawOrder.ids;
+  await loadNotes();
+  await loadRanges();
+  await refreshLawList();
+  say('取り込んだ');
+
+  // 4. 自分の塊を置く
+  let gen = 0;
+  try {
+    const rec = await store.getMeta(GENERATION_KEY);
+    gen = Number((rec && rec.value) || 0);
+  } catch (e) { /* 0 から */ }
+  gen += 1;
+  const snap = buildSnapshot({
+    notes: merged.notes, ranges: merged.ranges, order: merged.lawOrder,
+    datasetId, writerId: deviceId, generation: gen,
+  });
+  try {
+    await remote.createSnapshot(snap);
+  } catch (e) {
+    // 取り込みは済んでいる。置けなかっただけなので、次に同じ状態から出し直す
+    out.why = '取り込みましたが、置けませんでした: ' + (e && e.message ? e.message : e);
+    return out;
+  }
+  // 5. 置けた世代だけを確認済みにする
+  try {
+    await store.putMeta(GENERATION_KEY, gen);
+    const seen = {};
+    for (const s of incoming) seen[s.writerId] = s.generation;
+    await store.putMeta(LAST_SEEN_KEY, seen);
+    await store.putMeta(LAST_SYNC_KEY, Date.now());
+  } catch (e) { /* 記録できなくても、次の同期でやり直せる */ }
+
+  out.ok = true;
+  out.published = true;
+  say('置いた（世代 ' + gen + '）');
+  return out;
+}
+
+/** 同期の結果を一言にする。 */
+function syncSummary(r) {
+  if (!r.ok) return r.why || '同期できませんでした';
+  const parts = ['同期しました'];
+  if (r.read) parts.push('他の端末 ' + r.read + '件を取り込み');
+  if (r.conflicts) parts.push('別々に直したものが ' + r.conflicts + '件（両方残しました）');
+  if (r.skipped.length) parts.push('別のかたまり ' + r.skipped.length + '件は混ぜていません');
+  return parts.join('　/　');
+}
+
 /* --------------------------------------------- 条の注釈を第1項へ移す */
 
 /*
@@ -4933,6 +5138,126 @@ async function moveArticleNotesOnce() {
   await loadNotes();
   toast('条に付いていた注釈 ' + plan.moved + '件を第1項へ移しました'
     + (plan.skipped ? '（第1項に既にあった ' + plan.skipped + '件はそのまま）' : ''));
+}
+
+
+/* ------------------------------------------------- 同期：運ぶ形と検証 */
+
+/*
+ * 同期で置くファイルの形。バックアップの形とは分ける。
+ *
+ *   端末ごとに全量を1つ置く。他の端末のファイルは読むだけで、書き換えない。
+ *   共有の1ファイルを皆で上書きすると、別々のレコードを直しただけで
+ *   片方の変更が消える。
+ *
+ *   {
+ *     format: 'roppo-sync',
+ *     schemaVersion: 1,     この JSON の読み方
+ *     datasetId: '...',     別の同期のかたまりを混ぜないための印
+ *     writerId: '...',      どの端末が出したか（＝端末ID）
+ *     generation: 12,       その端末が何回目に出したか。時計を使わずに順を決める
+ *     records: { notes: [], ranges: [], lawOrder: {...} }
+ *   }
+ *
+ * 墓石も未解決の衝突（alts）も、records にそのまま入れる。入れないと
+ * 相手の端末で復活したり、衝突が片方だけ消えたりする。
+ */
+const SYNC_FORMAT = 'roppo-sync';
+const SYNC_SCHEMA = 1;
+const DATASET_KEY = 'roppo.datasetId';
+const GENERATION_KEY = 'roppo.generation';
+const LAST_SEEN_KEY = 'roppo.lastSeen';
+const LAST_SYNC_KEY = 'roppo.lastSyncAt';
+
+/** 同期のかたまりの印。最初に同期した端末が作り、以後それに揃える。 */
+async function loadDatasetId() {
+  try {
+    const rec = await store.getMeta(DATASET_KEY);
+    if (rec && rec.value) return rec.value;
+  } catch (e) { /* 下で作る */ }
+  const id = newDeviceId().replace(/^d/, 's');
+  try { await store.putMeta(DATASET_KEY, id); } catch (e) { /* 次回また */ }
+  return id;
+}
+
+/** いま持っているものを、そのまま1つの塊にする。DBは読むだけ。 */
+function buildSnapshot({ notes, ranges, order, datasetId, writerId, generation }) {
+  return {
+    format: SYNC_FORMAT,
+    schemaVersion: SYNC_SCHEMA,
+    datasetId,
+    writerId,
+    generation,
+    records: {
+      notes: notes || [],
+      ranges: ranges || [],
+      lawOrder: order || { ids: [], updatedAt: 0, version: {} },
+    },
+  };
+}
+
+/*
+ * 受け取った塊を検める。読めないものは読まない。
+ *
+ * JSON として読めるかだけでは足りない。形・版・型・鍵の重なりまで見る。
+ * 壊れたものを「空の同期データ」として扱ってはいけない。空と間違えると、
+ * こちらの墓石が相手を消しに行く。
+ *
+ * 返すのは { ok, why, snapshot }。ok が false なら触らない。
+ */
+function validateSnapshot(o) {
+  const no = why => ({ ok: false, why, snapshot: null });
+  if (!o || typeof o !== 'object') return no('中身がない');
+  if (o.format !== SYNC_FORMAT) return no('別の形式のファイル');
+  const sv = Number(o.schemaVersion);
+  if (!Number.isFinite(sv) || sv < 1) return no('版が読み取れない');
+  if (sv > SYNC_SCHEMA) return no('新しい版（' + sv + '）。このアプリでは読めない');
+  if (typeof o.writerId !== 'string' || !o.writerId) return no('発行元が無い');
+  const gen = Number(o.generation);
+  if (!Number.isFinite(gen) || gen < 0) return no('世代番号が読み取れない');
+  const r = o.records;
+  if (!r || typeof r !== 'object') return no('records が無い');
+  if (!Array.isArray(r.notes) || !Array.isArray(r.ranges)) return no('records の形が違う');
+
+  const seenN = new Set();
+  for (const n of r.notes) {
+    if (!n || typeof n !== 'object') return no('注釈に中身のないものがある');
+    if (typeof n.key !== 'string' || !n.key) return no('鍵の無い注釈がある');
+    if (seenN.has(n.key)) return no('同じ鍵の注釈が2つある: ' + n.key);
+    seenN.add(n.key);
+  }
+  const seenR = new Set();
+  for (const x of r.ranges) {
+    if (!x || typeof x !== 'object') return no('文言注釈に中身のないものがある');
+    if (typeof x.id !== 'string' || !x.id) return no('id の無い文言注釈がある');
+    if (seenR.has(x.id)) return no('同じ id の文言注釈が2つある: ' + x.id);
+    seenR.add(x.id);
+  }
+  if (r.lawOrder && !Array.isArray(r.lawOrder.ids)) return no('並び順の形が違う');
+  return { ok: true, why: '', snapshot: o };
+}
+
+/*
+ * 2つの塊を1つにする。マージの核を通すだけ。ここに判定を書かない。
+ * 左右を入れ替えても同じ結果になる（試験で確かめている）。
+ */
+function mergeSnapshots(a, b) {
+  const ra = (a && a.records) || {};
+  const rb = (b && b.records) || {};
+  const oa = ra.lawOrder || { ids: [], updatedAt: 0, version: {} };
+  const ob = rb.lawOrder || { ids: [], updatedAt: 0, version: {} };
+  let order;
+  if (!oa.ids.length) order = ob;
+  else if (!ob.ids.length) order = oa;
+  else {
+    const m = mergeRecord({ ...oa, key: 'lawOrder' }, { ...ob, key: 'lawOrder' });
+    order = { ids: m.ids || [], updatedAt: m.updatedAt || 0, version: m.version || {} };
+  }
+  return {
+    notes: mergeLists(ra.notes || [], rb.notes || [], r => r.key),
+    ranges: mergeLists(ra.ranges || [], rb.ranges || [], r => r.id),
+    lawOrder: order,
+  };
 }
 
 /* ------------------------------------------------------------ 同期：版 */
@@ -5147,6 +5472,63 @@ function mergeRecord(left, right) {
 /** 衝突を抱えているか（画面に「別の編集があります」と出す判断）。 */
 const hasConflict = r => !!(r && r.alts && r.alts.length);
 
+/*
+ * 衝突している中身を、一言で見せるための文字。
+ *
+ * 大きな比較画面は作らない。どちらを採るか決めるには、何が書いてあるかが
+ * 見えれば足りる。長いメモは切って、続きがあることだけ分かるようにする。
+ */
+function noteBrief(r) {
+  if (!r) return '';
+  if (isTomb(r)) return '（削除）';
+  const parts = [];
+  if (r.color) {
+    const c = MARK_COLORS.find(x => x.key === r.color);
+    parts.push('マーク' + (c ? c.label : r.color));
+  }
+  if ((r.tags || []).length) parts.push('タグ ' + r.tags.join('・'));
+  if (String(r.summary || '').trim()) parts.push('前メモ「' + r.summary.trim().slice(0, 30) + '」');
+  if (String(r.memo || '').trim()) parts.push('メモ「' + r.memo.trim().slice(0, 40) + '」');
+  if (String(r.text || '').trim() && !('key' in r)) parts.unshift('「' + r.text.trim().slice(0, 20) + '」');
+  return parts.length ? parts.join('　') : '（空）';
+}
+
+/*
+ * 「別の編集があります」の箱を組む。条項号の注釈でも文言の注釈でも同じ形。
+ *
+ * 表に出しているものと、alts に積んである候補を並べ、どれかを選ばせる。
+ * 選んだら resolveConflict が両方の版を取り込んだ新しい編集を作るので、
+ * 古い候補を後から受け取っても戻らない。
+ */
+function conflictHtml(rec) {
+  if (!hasConflict(rec)) return '';
+  const row = (r, i, now) =>
+    '<div class="cf-row"><div class="cf-body">'
+    + (now ? '<b>いま表に出ているもの</b><br>' : '')
+    + esc(noteBrief(r)) + '</div>'
+    + '<button type="button" class="mini" data-cf="' + i + '">これを採る</button></div>';
+  return '<div class="note-conflict"><div class="cf-head">別の編集があります</div>'
+    + '<div class="cf-note">同じところを、別々の端末で直したものです。'
+    + 'どちらも消していません。採る方を選んでください。</div>'
+    + row(rec, -1, true)
+    + (rec.alts || []).map((a, i) => row(a, i, false)).join('')
+    + '</div>';
+}
+
+/** 「これを採る」を押したときの配線。box の中のボタンを見る。 */
+function wireConflict(box, rec, save) {
+  for (const b of $$('button[data-cf]', box)) {
+    b.onclick = async () => {
+      const i = Number(b.dataset.cf);
+      const chosen = i < 0 ? rec : (rec.alts || [])[i];
+      if (!chosen) return;
+      const solved = resolveConflict(rec, chosen, deviceId);
+      await save(solved);
+      toast('採った方に決めました');
+    };
+  }
+}
+
 /**
  * 鍵ごとに寄せてマージする。入力の配列も要素も変えない。
  * 順番を変えても、何度混ぜても同じ結果になること（試験で確かめている）。
@@ -5283,7 +5665,20 @@ async function importBackup(file) {
   const ranges = mergeLists(curRanges, data.ranges || [], r => r.id);
   const conflicts = notes.filter(hasConflict).length + ranges.filter(hasConflict).length;
 
-  const order = Array.isArray(data.lawOrder) && data.lawOrder.length ? data.lawOrder : null;
+  /*
+   * 並び順も版で比べる。バックアップには配列で入っていることがある
+   * （版を入れる前の書き出し）ので、その形も受ける。
+   */
+  const inOrder = Array.isArray(data.lawOrder)
+    ? { ids: data.lawOrder, updatedAt: 0, version: {} }
+    : (data.lawOrder && Array.isArray(data.lawOrder.ids) ? data.lawOrder : null);
+  let orderRec = null;
+  if (inOrder && inOrder.ids.length) {
+    const m = mergeRecord({ ...lawOrderRec, key: 'lawOrder' },
+      { ...inOrder, key: 'lawOrder' });
+    if (m && Array.isArray(m.ids) && m.ids.join() !== lawOrderRec.ids.join()) orderRec = m;
+  }
+  const order = orderRec ? orderRec.ids : null;
 
   try {
     await store.applyBulk({ laws, notes, ranges, lawOrder: order });
@@ -5293,7 +5688,11 @@ async function importBackup(file) {
   }
 
   for (const law of laws) state.indexCache.delete(law.lawId);
-  if (order) lawOrder = order;
+  if (orderRec) {
+    lawOrderRec = { ids: orderRec.ids, updatedAt: orderRec.updatedAt || 0,
+      version: orderRec.version || {} };
+    lawOrder = lawOrderRec.ids;
+  }
   await loadNotes();
   await loadRanges();
   await refreshLawList();

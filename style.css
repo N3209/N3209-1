@@ -1007,6 +1007,21 @@ mark.rng-ul:hover {
 /* 「注釈を出さない」では下線も消す。text-decoration は上で消えない */
 [data-annot="none"] mark.rng-ul { text-decoration: none; }
 
+/* 別々に直したものを並べて見せる箱 */
+.note-conflict {
+  border: 1px solid var(--mk-red-b, #c00);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 10px;
+  background: color-mix(in srgb, var(--mk-red, #fdd) 35%, transparent);
+}
+.note-conflict .cf-head { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
+.note-conflict .cf-note { font-size: 11px; color: var(--fg-dim); line-height: 1.6; margin-bottom: 6px; }
+.note-conflict .cf-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 5px 0; border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.note-conflict .cf-body { flex: 1; min-width: 0; font-size: 12px; line-height: 1.6; word-break: break-word; }
+.note-conflict .cf-row button { flex: none; }
+
 /* ------------------------------------------------------- 注釈のポップアップ */
 
 .popover {
