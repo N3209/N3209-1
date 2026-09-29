@@ -116,8 +116,10 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   text-decoration: underline; text-decoration-style: dotted;
   text-underline-offset: 3px; text-decoration-color: var(--line);
 }
-.article-title:hover, .para-num:hover, .item-title:hover {
-  background: var(--accent-bg); text-decoration-color: var(--accent);
+@media (hover: hover) and (pointer: fine) {
+  .article-title:hover, .para-num:hover, .item-title:hover {
+    background: var(--accent-bg); text-decoration-color: var(--accent);
+  }
 }
 
 /* 取り込んだものの帯。未施行ほど危なくはないので、赤ではなく落ち着いた色。 */
@@ -737,7 +739,9 @@ ruby rt { font-size: .5em; font-weight: normal; }
 [data-paren="dim"] .paren.p3 { color: color-mix(in srgb, var(--fg) 30%, var(--bg)); }
 /* 括弧の中の参照リンクも一緒に薄くする。下線だけ残ると浮いて見える。 */
 [data-paren="dim"] .paren a.ref { color: inherit; border-bottom-color: currentColor; opacity: .7; }
-[data-paren="dim"] .paren a.ref:hover { color: var(--accent); opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  [data-paren="dim"] .paren a.ref:hover { color: var(--accent); opacity: 1; }
+}
 
 /*
  * 条文参照。本文の見た目を壊さないよう、ふだんは薄い点線だけにする。
@@ -747,7 +751,10 @@ a.ref {
   color: inherit; text-decoration: none; cursor: pointer;
   border-bottom: 1px dotted var(--fg-faint);
 }
-a.ref:hover { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-bg); }
+/* 本文の中の数が多いもの（参照リンクは会社法で4,823件）は、カーソルのある端末だけ */
+@media (hover: hover) and (pointer: fine) {
+  a.ref:hover { color: var(--accent); border-bottom-color: var(--accent); background: var(--accent-bg); }
+}
 [data-annot="none"] a.ref { border-bottom: none; }
 
 .law-table { border-collapse: collapse; margin: 1em 0; font-size: .92em; line-height: 1.7; }
@@ -773,19 +780,28 @@ a.ref:hover { color: var(--accent); border-bottom-color: var(--accent); backgrou
   transition: outline-color .08s;
 }
 
-[data-anchor]:hover > .para-num,
-[data-anchor]:hover > .item-title,
-[data-anchor]:hover > .article-title,
-[data-anchor]:hover > .article-caption,
-[data-anchor]:hover > .para > .article-title {
-  outline: 1.5px solid var(--line);
-  outline-offset: 3px;
-}
-/* 内側の号などにカーソルがあるときは、外側の項番号に枠を出さない */
-[data-anchor]:has([data-anchor]:hover) > .para-num,
-[data-anchor]:has([data-anchor]:hover) > .article-caption,
-[data-anchor]:has([data-anchor]:hover) > .para > .article-title {
-  outline: none;
+/*
+ * カーソルのある端末にだけ掛ける。
+ *
+ * 指で触る端末では、触るたびにこの :hover と :has() の当たり判定が
+ * 本文じゅう（会社法で2万3千要素）に及ぶ。そもそも指にカーソルは無く、
+ * 選んだことは .sel で示しているので、掛ける意味がない。
+ */
+@media (hover: hover) and (pointer: fine) {
+  [data-anchor]:hover > .para-num,
+  [data-anchor]:hover > .item-title,
+  [data-anchor]:hover > .article-title,
+  [data-anchor]:hover > .article-caption,
+  [data-anchor]:hover > .para > .article-title {
+    outline: 1.5px solid var(--line);
+    outline-offset: 3px;
+  }
+  /* 内側の号などにカーソルがあるときは、外側の項番号に枠を出さない */
+  [data-anchor]:has([data-anchor]:hover) > .para-num,
+  [data-anchor]:has([data-anchor]:hover) > .article-caption,
+  [data-anchor]:has([data-anchor]:hover) > .para > .article-title {
+    outline: none;
+  }
 }
 
 [data-anchor].sel > .para-num,
@@ -860,7 +876,9 @@ mark.rng-blue   { background: var(--mk-blue); }
 mark.rng-red    { background: var(--mk-red); }
 mark.rng-orange { background: var(--mk-orange); }
 mark.rng-purple { background: var(--mk-purple); }
-mark.rng:hover { filter: brightness(.94); }
+@media (hover: hover) and (pointer: fine) {
+  mark.rng:hover { filter: brightness(.94); }
+}
 /* メモ付きは下に点線を引いて、色だけのものと区別する */
 mark.rng.has-memo { border-bottom: 2px dotted rgba(0, 0, 0, .45); }
 

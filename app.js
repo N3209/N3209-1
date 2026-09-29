@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v78';
+const APP_VERSION = 'v79';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -4037,6 +4037,22 @@ function clearParens(pane) {
  * 設定を変えるたびに本文を組み直さなくて済むようにする。
  */
 function paintParens(pane) {
+  /*
+   * まず外す。呼び直しは設定の切り替えで起きるので、外さずに包むと
+   * 二重・三重に入れ子になって増えていく。clearParens はあったのに
+   * どこからも呼ばれていなかった。
+   */
+  clearParens(pane);
+
+  /*
+   * 薄くしない設定なら、包み自体を作らない。
+   *
+   * 以前は常に包んでおき、薄くするかどうかはCSSだけで切り替えていた。
+   * そのほうが切り替えは速いが、使わない人にも会社法で3千個ほどの
+   * 包みを持たせることになる。切り替えたときにここを呼び直せば足りる。
+   */
+  if ((document.documentElement.dataset.paren || 'dim') !== 'dim') return;
+
   for (const el of $$('.para[data-anchor], .item[data-anchor]', pane.el)) {
     const map = textMapOf(el);
     const t = map.text;
