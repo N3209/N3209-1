@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v81';
+const APP_VERSION = 'v82';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -982,17 +982,27 @@ function elementForAnchor(lawEl, anchor) {
 function textMapOf(el) {
   const nodes = [];
   let text = '';
-  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-    acceptNode(n) {
-      const p = n.parentElement;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      // 自分で書いた文字は本文ではない。数に入れると文言メモの位置がずれる。
-      if (p.closest('.memo-inline, .inline-tags, .note-summary, .slash')) return NodeFilter.FILTER_REJECT;
-      if (p.closest('rt')) return NodeFilter.FILTER_REJECT;
-      if (p.closest('[data-anchor]') !== el) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
+  /*
+   * 要素も見せてもらい、要らない塊は部分木ごと飛ばす。
+   *
+   * 前は文字だけを見て、一つひとつ closest で「この文字は自分のものか」を
+   * 確かめていた。下位の号の文字も全部たどってから捨てるうえ、文字ごとに
+   * 先祖を遡ることになる。会社法2条のように号が38ある項では、これを
+   * 何度も払う。入口で切れば、たどりもしないし遡りもしない。
+   */
+  const SKIP_EL = '.memo-inline, .inline-tags, .note-summary, .slash';
+  const walk = document.createTreeWalker(el,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(n) {
+        if (n.nodeType !== 1) return NodeFilter.FILTER_ACCEPT;
+        // 自分で書いた文字は本文ではない。数に入れると文言メモの位置がずれる。
+        if (n.matches(SKIP_EL)) return NodeFilter.FILTER_REJECT;
+        if (n.tagName === 'RT') return NodeFilter.FILTER_REJECT;
+        // 下位の条項号は、その条項号自身のもの。ここでは数えない
+        if (n.dataset && n.dataset.anchor) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_SKIP;        // この要素自身は要らないが、中は見る
+      },
+    });
   let n;
   while ((n = walk.nextNode())) {
     const v = n.nodeValue || '';
@@ -2382,10 +2392,10 @@ async function selectAnchor(anchor, edit, pane) {
   $$('.sel').forEach(e => e.classList.remove('sel'));
   perfAt('前の選択を外した');
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
-  if (el) el.classList.add('sel');
+  if (el && !diagOn('nosel')) el.classList.add('sel');   // 切り分け用（仮）
   perfAt('選んだ');
   state.selected = anchor;
-  if (edit) openPopover();
+  if (edit && !diagOn('nopop')) openPopover();           // 切り分け用（仮）
   else closePopoverKeepSelection();
 }
 
@@ -6973,6 +6983,38 @@ function bindPaneEvents(pane) {
     perfAt('選択の確認');
 
     /*
+     * 番号を押したのなら、ここで決める。
+     *
+     * これより下の「。」さがしは、押した座標から文字位置を割り出し、その
+     * 条項号の文字を端から並べ直す。番号を押したときには要らない仕事である。
+     * 前は句点さがしを先に通していたので、注釈欄を開くたびに毎回それを
+     * 払っていた。順序としても、番号を押したなら番号の意図が優先される。
+     */
+    {
+      /*
+       * 取っ手は「番号」だけにする。見出し（（損害賠償）など）は本文の一部で、
+       * 押すものには見えない。番号だけでも全部の単位に届く。
+       *
+       * 番号を押したら、その番号が属する単位を選ぶ。条番号なら第1項である。
+       * 条番号は第1項の本文の頭に置かれている（第1項だけ番号を出さないのが
+       * 慣例）。以前はここで .article まで上がって「条」を選んでいたが、
+       * それだと第1項を指す取っ手がどこにも無くなる。刑訴280条のように
+       * 3項あって、どの項も番号を持たない法令では、第1項に注釈を付けられない。
+       *
+       * 注釈の単位は項に寄せる。読むときも「280条1項」と引くのであって、
+       * 「280条」と「280条1項」を別に印を付けたい場面は、まず無い。
+       * 条の単位に付いた古い注釈は、本文には出るし、印とメモの一覧から選べる。
+       */
+      const num = e.target.closest('.article-title, .para-num, .item-title');
+      if (num) {
+        const host = num.closest('[data-anchor]');
+        if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
+        perfDone();
+        return;
+      }
+    }
+
+    /*
      * 「。」の近くを押したら、区切りの印を出す入口を開く。
      * 本文のそれ以外の場所は、これまでどおり何も起きない。
      */
@@ -6996,35 +7038,9 @@ function bindPaneEvents(pane) {
     }
 
     /*
-     * 注釈欄を開くのは、条・項・号の「番号」を押したときだけにする。
+     * 注釈欄を開くのは、条・項・号の「番号」を押したときだけにする（上で済み）。
      * 本文のどこを触っても開くと、読んでいるだけで欄が出てきて邪魔になる。
-     * 番号はその単位を指す取っ手なので、押す先としても分かりやすい。
-     */
-    /*
-     * 取っ手は「番号」だけにする。見出し（（損害賠償）など）は本文の一部で、
-     * 押すものには見えない。番号だけでも全部の単位に届く。
-     */
-    const num = e.target.closest('.article-title, .para-num, .item-title');
-    if (num) {
-      /*
-       * 番号を押したら、その番号が属する単位を選ぶ。条番号なら第1項である。
-       *
-       * 条番号は第1項の本文の頭に置かれている（第1項だけ番号を出さないのが
-       * 慣例）。以前はここで .article まで上がって「条」を選んでいたが、
-       * それだと第1項を指す取っ手がどこにも無くなる。刑訴280条のように
-       * 3項あって、どの項も番号を持たない法令では、第1項に注釈を付けられない。
-       *
-       * 注釈の単位は項に寄せる。読むときも「280条1項」と引くのであって、
-       * 「280条」と「280条1項」を別に印を付けたい場面は、まず無い。
-       * 条の単位に付いた古い注釈は、本文には出るし、印とメモの一覧から選べる。
-       */
-      const host = num.closest('[data-anchor]');
-      if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
-      perfDone();
-      return;
-    }
-
-    /*
+     *
      * 番号を持たない単位は、本文そのものが取っ手になる。
      *   ・前文
      *   ・別表・別記・別図
