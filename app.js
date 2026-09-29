@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v77';
+const APP_VERSION = 'v78';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1454,6 +1454,8 @@ function renderLawList() {
 
 async function openLaw(lawId, anchor, scrollTop, pane) {
   pane = pane || P();
+  // 開くのにどれだけかかったかは、重さを測るときに要る（下の measurePerf）
+  const openedAt = performance.now();
   await flushSave();
   const rec = await store.getLaw(lawId);
   if (!rec) { toast('法令が見つかりません'); return; }
@@ -1564,6 +1566,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   if (find.q && find.where === 'law' && find.scopeLawId !== lawId) doFind();
   else renderFindList();
   try { localStorage.setItem('roppo.last', lawId); } catch (e) { /* 使えなくても支障ない */ }
+  pane._openMs = performance.now() - openedAt;
 }
 
 /* ------------------------------------------------- 条文参照の行き先を決める */
@@ -6377,6 +6380,9 @@ async function measurePerf() {
     + '（画面 ' + Math.round(el.scrollHeight / (el.clientHeight || 1)) + '枚分）');
   lines.push('要素 ' + n('*').toLocaleString()
     + '　文字 ' + (el.textContent || '').length.toLocaleString());
+  if (pane._openMs) {
+    lines.push('この法令を開くのにかかった時間 ' + Math.round(pane._openMs) + 'ms');
+  }
   lines.push('この法令の注釈 ' + [...state.notes.values()]
     .filter(x => x.lawId === pane.current.lawId).length
     + '　文言注釈 ' + [...state.ranges.values()]
@@ -6455,8 +6461,36 @@ async function measurePerf() {
     renderFilterPicker();
   }
 
-  out.textContent = lines.join('\n') + '\n\nいま本文を指で動かしてください（3秒）…';
+  /*
+   * 指が動き出してから測る。
+   *
+   * 押してすぐ3秒数えると、指が動く前に終わってしまう。前の測定は
+   * 「動いた量 0px」で、止まっているときの間隔を測っていた。
+   * 動き出すのを待ち、動いている間だけを採る。
+   */
+  out.textContent = lines.join('\n') + '\n\n本文を指で動かしてください（待っています）…';
 
+  const startTop = el.scrollTop;
+  const moving = await new Promise(done => {
+    const giveUp = setTimeout(() => { el.removeEventListener('scroll', on); done(false); }, 15000);
+    const on = () => {
+      if (Math.abs(el.scrollTop - startTop) < 24) return;   // 指が触れただけの揺れは待つ
+      clearTimeout(giveUp);
+      el.removeEventListener('scroll', on);
+      done(true);
+    };
+    el.addEventListener('scroll', on, { passive: true });
+  });
+
+  if (!moving) {
+    lines.push('');
+    lines.push('描き直しの間隔: 測れませんでした（本文が動きませんでした）');
+    out.textContent = lines.join('\n');
+    return;
+  }
+  out.textContent = lines.join('\n') + '\n\nそのまま動かし続けてください（3秒）…';
+
+  const from = el.scrollTop;
   const t = [];
   const start = performance.now();
   await new Promise(done => {
@@ -6472,7 +6506,7 @@ async function measurePerf() {
   gaps.sort((a, b) => a - b);
   const at = p => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))] : 0);
   const slow = gaps.filter(g => g > 32).length;
-  const moved = Math.round(Math.abs(el.scrollTop - (pane._perfTop || 0)));
+  const moved = Math.round(Math.abs(el.scrollTop - from));
 
   lines.push('');
   lines.push('描き直しの間隔（' + gaps.length + '回）');
