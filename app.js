@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v71';
+const APP_VERSION = 'v72';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1383,6 +1383,12 @@ async function refreshLawList() {
    */
   state.laws = sortLaws(await store.allLawMeta());
   renderLawList();
+  /*
+   * 印とメモの一覧は法令名を引くし、「元の法令へ移す」の知らせは法令を
+   * 持っているかどうかで変わる。法令を足しても作り直していなかったので、
+   * 取り込んだのに「先に取り込んでください」と出たままになっていた。
+   */
+  renderMarkList();
 }
 
 function renderLawList() {
@@ -3311,24 +3317,18 @@ function renderMarkList() {
   const rev = countRevisionNotes();
   const revBox = $('#rev-move-box');
   if (revBox) {
-    revBox.hidden = !(rev.moved || rev.missing.length);
+    revBox.hidden = !rev.moved;
     const body = $('#rev-move-body');
     const btn = $('#btn-rev-move');
-    if (rev.moved) {
-      if (body) {
-        body.textContent = '固定した版に付けた注釈が ' + rev.moved + '件あります。'
-          + '元の法令とは別のものとして扱われるため、ほかの端末と揃いません。';
-      }
-      if (btn) { btn.hidden = false; btn.textContent = '元の法令へ移す'; }
-    } else if (rev.missing.length) {
-      // 移す先が無い。何をすればよいかまで言う
-      if (body) {
-        body.textContent = '固定した版に付けた注釈があります。移すには、元の法令'
-          + '（' + rev.missing.join('、') + '）を先に取り込んでください。'
-          + '「＋ 追加」から法令名で検索できます。';
-      }
-      if (btn) btn.hidden = true;
+    if (rev.moved && body) {
+      body.textContent = '固定した版に付けた注釈が ' + rev.moved + '件あります。'
+        + '元の法令とは別のものとして扱われるため、ほかの端末と揃いません。'
+        + (rev.missing.length
+          ? '（移した先の ' + rev.missing.join('、')
+            + ' はこの端末にありません。同期すれば、持っている端末で揃います。）'
+          : '');
     }
+    if (btn) btn.hidden = !rev.moved;
   }
 
   /*
@@ -5341,10 +5341,14 @@ const baseLawIdOf = id => String(id).split('@')[0];
 
 /**
  * 移す対象を選ぶ。DBも時計も触らない。
- * 元の法令を持っていないものは触らない（移す先が無い）。
+ *
+ * 元の法令をこの端末に持っているかどうかは見ない。持っていなくても住所は
+ * 正しくなり、持っている端末と同期すれば揃う。持っていることを条件にすると、
+ * 移す先が無い端末では何もできないまま取り残される。
+ *
+ * 移した先にすでに注釈があるものだけは触らない。上書きすると消える。
  */
-function planRevisionNoteMove(notes, ranges, laws, now) {
-  const have = new Set((laws || []).map(l => l.lawId));
+function planRevisionNoteMove(notes, ranges, now) {
   const byKey = new Map((notes || []).map(n => [n.key, n]));
   const outNotes = [], outRanges = [];
   let moved = 0, skipped = 0;
@@ -5352,7 +5356,6 @@ function planRevisionNoteMove(notes, ranges, laws, now) {
   for (const n of notes || []) {
     if (isTomb(n) || !isPinnedLawId(n.lawId)) continue;
     const base = baseLawIdOf(n.lawId);
-    if (!have.has(base)) { skipped++; continue; }
     const toKey = base + ':' + n.anchor;
     const there = byKey.get(toKey);
     if (there && !isTomb(there)) { skipped++; continue; }
@@ -5362,10 +5365,8 @@ function planRevisionNoteMove(notes, ranges, laws, now) {
   }
   for (const r of ranges || []) {
     if (isTomb(r) || !isPinnedLawId(r.lawId)) continue;
-    const base = baseLawIdOf(r.lawId);
-    if (!have.has(base)) { skipped++; continue; }
     // 文言注釈は id で決まるので、鍵の衝突は起きない。住所だけ移す
-    outRanges.push({ ...r, lawId: base, updatedAt: now });
+    outRanges.push({ ...r, lawId: baseLawIdOf(r.lawId), updatedAt: now });
     moved++;
   }
   return { notes: outNotes, ranges: outRanges, moved, skipped };
@@ -5380,8 +5381,8 @@ function planRevisionNoteMove(notes, ranges, laws, now) {
  */
 function countRevisionNotes() {
   const plan = planRevisionNoteMove([...state.notes.values()],
-    [...state.ranges.values()], state.laws, Date.now());
-  // 元の法令を持っていない固定版の住所を、名前を添えて挙げる
+    [...state.ranges.values()], Date.now());
+  // 移した先の法令をこの端末に持っていないものは、そう言う（移せはする）
   const missing = new Map();
   const have = new Set(state.laws.map(l => l.lawId));
   const scan = rec => {
@@ -5389,8 +5390,7 @@ function countRevisionNotes() {
     const base = baseLawIdOf(rec.lawId);
     if (have.has(base)) return;
     const law = state.laws.find(l => l.lawId === rec.lawId);
-    const name = law ? (law.baseTitle || law.lawTitle) : base;
-    missing.set(base, name);
+    missing.set(base, (law && (law.baseTitle || law.lawTitle)) || base);
   };
   for (const n of state.notes.values()) scan(n);
   for (const r of state.ranges.values()) scan(r);
@@ -5400,7 +5400,7 @@ function countRevisionNotes() {
 async function doRevisionNoteMove() {
   const now = Date.now();
   const plan = planRevisionNoteMove([...state.notes.values()],
-    [...state.ranges.values()], state.laws, now);
+    [...state.ranges.values()], now);
   if (!plan.moved) { toast('移せるものがありません'); return; }
   if (!confirm('固定した版に付けた注釈 ' + plan.moved + '件を、元の法令へ移します。'
     + '\n\n移す前にバックアップを取っておくと安全です。よろしいですか？')) return;
