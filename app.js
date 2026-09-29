@@ -4896,7 +4896,6 @@ async function syncOnce(remote, opts) {
   catch (e) { out.why = '一覧を取れません: ' + (e && e.message ? e.message : e); return out; }
   if (!Array.isArray(list)) { out.why = '一覧の形が違います'; return out; }
 
-  const datasetId = await loadDatasetId();
   // 端末ごとに、いちばん新しい世代だけ読む
   const newest = new Map();
   for (const f of list) {
@@ -4906,7 +4905,11 @@ async function syncOnce(remote, opts) {
     if (!cur || Number(f.generation || 0) > Number(cur.generation || 0)) newest.set(f.writerId, f);
   }
 
-  const incoming = [];
+  /*
+   * まず全部読んで検める。かたまりの印を決めるのは、読んでからである。
+   * 先に自分で印を作ってしまうと、置いてあるものと食い違って合流できない。
+   */
+  const all = [];
   for (const f of newest.values()) {
     let raw;
     try { raw = await remote.readSnapshot(f.id); }
@@ -4918,11 +4921,20 @@ async function syncOnce(remote, opts) {
     }
     const v = validateSnapshot(raw);
     if (!v.ok) { out.why = '中身が読めません（' + f.writerId + '）: ' + v.why; return out; }
-    if (v.snapshot.datasetId && datasetId && v.snapshot.datasetId !== datasetId) {
-      out.skipped.push(f.writerId);                  // 別のかたまり。混ぜない
+    all.push(v.snapshot);
+  }
+
+  const ds = await adoptDatasetId(all);
+  if (!ds.id) { out.why = ds.why || 'かたまりの印を決められません'; return out; }
+  const datasetId = ds.id;
+
+  const incoming = [];
+  for (const s of all) {
+    if (s.datasetId && s.datasetId !== datasetId) {
+      out.skipped.push(s.writerId);                  // 別のかたまり。混ぜない
       continue;
     }
-    incoming.push(v.snapshot);
+    incoming.push(s);
     out.read++;
   }
   say(out.read + '件を読んだ');
@@ -5183,15 +5195,45 @@ const GENERATION_KEY = 'roppo.generation';
 const LAST_SEEN_KEY = 'roppo.lastSeen';
 const LAST_SYNC_KEY = 'roppo.lastSyncAt';
 
-/** 同期のかたまりの印。最初に同期した端末が作り、以後それに揃える。 */
+/*
+ * 同期のかたまりの印。
+ *
+ * 最初に同期した端末が決め、後から来た端末はそれに合わせる。端末ごとに
+ * 勝手に作ると、互いを「別のかたまり」として飛ばし合い、いつまでも
+ * 揃わない。実際にそうなった。
+ *
+ * まだ一度も置いていないうちは、印を作らない。置いてあるものを見てから
+ * 決める（adoptDatasetId）。
+ */
 async function loadDatasetId() {
   try {
     const rec = await store.getMeta(DATASET_KEY);
     if (rec && rec.value) return rec.value;
-  } catch (e) { /* 下で作る */ }
-  const id = newDeviceId().replace(/^d/, 's');
-  try { await store.putMeta(DATASET_KEY, id); } catch (e) { /* 次回また */ }
-  return id;
+  } catch (e) { /* まだ無い */ }
+  return '';
+}
+
+/*
+ * 置いてあるものを見て、かたまりの印を決める。
+ *
+ *   手元に印がある        そのまま使う（もう仲間に入っている）
+ *   置いてあるものがある   その印に合わせる（先に居た方に揃える）
+ *   どちらも無い          新しく作る（自分が最初）
+ *
+ * 置いてあるものの印が2種類以上あるときは、勝手に決めない。混ぜてはいけない
+ * ものを混ぜる恐れがあるので、言って止める。
+ */
+async function adoptDatasetId(foreign) {
+  const mine = await loadDatasetId();
+  if (mine) return { id: mine, why: '' };
+
+  const found = [...new Set(foreign.map(f => f && f.datasetId).filter(Boolean))];
+  if (found.length > 1) {
+    return { id: '', why: '置いてあるものが ' + found.length + '種類あります。混ぜません' };
+  }
+  const id = found.length === 1 ? found[0] : newDeviceId().replace(/^d/, 's');
+  try { await store.putMeta(DATASET_KEY, id); } catch (e) { /* 次回また決める */ }
+  return { id, why: '' };
 }
 
 /** いま持っているものを、そのまま1つの塊にする。DBは読むだけ。 */
