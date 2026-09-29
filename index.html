@@ -326,7 +326,22 @@
     </p>
     <div class="row">
       <button type="button" id="btn-perf" class="mini">動きの重さを測る</button>
+      <button type="button" id="btn-perf-run" class="mini">直前の一手の記録</button>
     </div>
+    <!-- ▼ ここから重さの切り分け用（仮）。原因が決まったら、この塊ごと外す -->
+    <p class="hint" style="margin:8px 0 2px">
+      切り分けのつまみ。入れたり外したりしてスクロールを比べてください。
+      読み込み直すと全部外れます。
+    </p>
+    <div id="diag-switches" style="display:grid;gap:3px;font-size:12px;margin-bottom:8px">
+      <label><input type="checkbox" data-diag="noscroll"> 本文追従（現在位置の帯）を止める</label>
+      <label><input type="checkbox" data-diag="norel"> 条項号の位置指定を外す</label>
+      <label><input type="checkbox" data-diag="nodot"> 参照リンクの点線を消す</label>
+      <label><input type="checkbox" data-diag="notrans"> なめらかな変化を止める</label>
+      <label><input type="checkbox" data-diag="nohover"> 本文のカーソル監視を外す</label>
+      <label><input type="checkbox" data-diag="nolist"> 保存のたびの一覧の作り直しを止める</label>
+    </div>
+    <!-- ▲ ここまで -->
     <pre id="perf-out" class="hint" hidden
          style="white-space:pre-wrap;word-break:break-all;margin:8px 0 0;
                 background:rgba(0,0,0,.05);padding:8px;border-radius:6px"></pre>

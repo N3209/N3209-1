@@ -771,6 +771,12 @@ a.ref {
 
 [data-anchor] { position: relative; cursor: pointer; }
 
+/* ▼ 重さの切り分け用（仮）。原因が決まったら、この塊ごと外す */
+[data-diag~="norel"] [data-anchor] { position: static; }
+[data-diag~="nodot"] a.ref { border-bottom: none; }
+[data-diag~="notrans"] * { transition: none !important; }
+/* ▲ ここまで */
+
 /*
  * 選択とホバーは「条文番号そのもの」に出す。本文全体を囲うと読む邪魔になる。
  * box-shadow で膨らませているのは、padding だと後ろの文字がずれるため。

@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v79';
+const APP_VERSION = 'v80';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1836,15 +1836,23 @@ function wirePanes() {
 
   // 触った面を操作対象にする
   for (const p of state.panes) {
+    /*
+      * 打ち消さないことを宣言しておく。
+      *
+      * スクロールを止めるかどうかは touch-action で決まるので、これを
+      * 付けたから速くなる、という類のものではない（そう書いていたが誤り）。
+      * 実際に打ち消さない監視は、そう宣言しておくのが素直というだけ。
+      */
     p.root.addEventListener('pointerdown', () => {
       if (state.split && P() !== p) setActivePane(p.idx);
-    });
+    }, { passive: true });
     /*
      * スクロールは指を滑らせている間ずっと飛んでくる（iOS で毎秒60回ほど）。
      * そのたびに帯を作り直し、目次を全部舐めていたので、長い法令ほど
      * 指に付いてこなくなっていた。1フレームに1回までにする。
      */
     p.el.addEventListener('scroll', () => {
+      if (diagOn('noscroll')) return;          // 切り分け用（仮）
       hideTip();
       if (p === P()) { clearTimeout(p._t); p._t = setTimeout(rememberPos, 300); }
       if (p._raf) return;
@@ -3577,22 +3585,30 @@ function renderNotePane() {
       b.type = 'button';
       b.className = 'tag-known-btn';
       b.textContent = t;
-      b.onclick = async () => {
+      b.onclick = async ev => {
+        perfBegin('タグを1つ付ける（候補から）', ev);
         note.tags.push(t);
         await saveNote(note);
         paintChips();
+        perfAt('チップ');
         paintKnown();
+        perfAt('候補');
+        perfDone();
       };
       known.appendChild(b);
     }
   };
 
-  const addTag = async v => {
+  const addTag = async (v, ev) => {
     if (!v || note.tags.includes(v)) return;
+    perfBegin('タグを1つ付ける', ev);
     note.tags.push(v);
     await saveNote(note);
     paintChips();
+    perfAt('チップ');
     paintKnown();
+    perfAt('候補');
+    perfDone();
   };
 
   const tagInput = $('#tag-input');
@@ -3601,7 +3617,7 @@ function renderNotePane() {
     e.preventDefault();
     const v = tagInput.value.trim();
     tagInput.value = '';
-    await addTag(v);
+    await addTag(v, e);
   };
   /*
    * 外したタグを候補に戻せるよう、チップ側からも呼べるようにしておく。
@@ -3654,10 +3670,12 @@ async function saveNote(note) {
    * DBの記録は墓石も返すので、そこから継ぐ。
    */
   let base = note.version;
+  perfAt('DBを読む');
   try {
     const old = await store.getNote(note.key);
     if (old) base = vvMerge(base, old.version);
   } catch (e) { /* 読めなくても保存は続ける。版が戻るだけで、消しはしない */ }
+  perfAt('読めた');
   note.version = vvBump(base, deviceId);
   try {
     if (!note.tags.length && !(note.memo || '').trim()
@@ -3675,8 +3693,13 @@ async function saveNote(note) {
     toast('保存できませんでした: ' + err.message);
     return false;
   }
-  renderMarkList();
-  renderFilterPicker();
+  perfAt('DBに書けた');
+  if (!diagOn('nolist')) {                     // 切り分け用（仮）
+    renderMarkList();
+    perfAt('印とメモの一覧');
+    renderFilterPicker();
+    perfAt('絞り込みの札');
+  }
   /*
    * 触った条項号だけを塗り直す。
    *
@@ -3685,6 +3708,7 @@ async function saveNote(note) {
    * 毎回すべての印を外して包み直していたが、まるごと無駄だった。
    */
   repaintNote(note.lawId, note.anchor);
+  perfAt('本文の塗り直し');
   if (state.selected) {
     const el = $(`[data-anchor="${CSS.escape(state.selected)}"]`, P().el);
     if (el) el.classList.add('sel');
@@ -4109,6 +4133,7 @@ function hideTip() {
  * 文言メモは常に、条項号のメモは本文にぶら下げていないときだけ。
  */
 function handleHover(e) {
+  if (diagOn('nohover')) return;               // 切り分け用（仮）
   if (annotMode() === 'none') { hideTip(); return; }
 
   const mk = e.target.closest && e.target.closest('mark[data-range-id]');
@@ -6365,6 +6390,91 @@ function openExportDialog() {
   $('#dlg-export').showModal();
 }
 
+/* ---------------------------------------- 重さの切り分け用（仮） */
+
+/*
+ * iPhone だけが重い理由を、実機で一つずつ外して確かめるためのつまみ。
+ *
+ * 当てずっぽうで直すと、効いたのか効いていないのか分からないまま
+ * コードだけが増える。原因が決まったら、この塊は消す。
+ * 覚えさせない（読み込み直すと外れる）のは、切り分けの状態のまま
+ * 使い続けてしまわないようにするため。
+ */
+const diag = new Set();
+const diagOn = k => diag.has(k);
+
+function wireDiag() {
+  const box = $('#diag-switches');
+  if (!box) return;
+  box.addEventListener('change', e => {
+    const b = e.target.closest('input[data-diag]');
+    if (!b) return;
+    if (b.checked) diag.add(b.dataset.diag); else diag.delete(b.dataset.diag);
+    document.documentElement.dataset.diag = [...diag].join(' ');
+  });
+}
+
+/* ------------------------------------------------ 一手ぶんの時刻を刻む */
+
+/*
+ * 指で押してから画面が変わるまでの、どこで時間が消えているかを見る。
+ *
+ * 前は saveNote を呼んで scrollHeight を読むまでを測っていた。これは
+ * 「配置の計算まで」であって、絵が出るのを待っていない。18msと出ても、
+ * 体感5秒と食い違う。食い違いの正体を見るには、実際に押したところから
+ * 刻むしかない（Codex の指摘）。
+ *
+ * 刻むこと自体は配列に足すだけにする。測るために遅くしては元も子もない。
+ */
+let perfRun = [];
+let perfRunName = '';
+
+function perfBegin(name, ev) {
+  perfRun = [];
+  perfRunName = name;
+  if (ev && typeof ev.timeStamp === 'number') {
+    perfRun.push({ name: '指が触れた', at: ev.timeStamp });
+  }
+  perfAt('受け取った');
+}
+
+function perfAt(name) {
+  if (!perfRunName || perfRun.length > 40) return;
+  perfRun.push({ name, at: performance.now() });
+}
+
+/*
+ * 手が離れたあと、描き直しが2回来るまで見届ける。
+ * これも「画素が出た証明」ではない（次の描き直しが来た、というだけ）。
+ * それでも、来ないこと自体が手掛かりになる。
+ */
+function perfDone() {
+  if (!perfRunName) return;
+  perfAt('処理おわり');
+  requestAnimationFrame(() => {
+    perfAt('つぎの描き直し');
+    requestAnimationFrame(() => {
+      perfAt('そのつぎ');
+      perfRunName = '';
+    });
+  });
+}
+
+/** 刻んだ記録を、押してからの経過で並べる。 */
+function perfRunText() {
+  if (!perfRun.length) return '記録がありません。タグを1つ付けてから押してください。';
+  const t0 = perfRun[0].at;
+  const out = [];
+  let prev = t0;
+  for (const r of perfRun) {
+    out.push('  +' + (r.at - t0).toFixed(1).padStart(7) + 'ms'
+      + '（' + (r.at - prev).toFixed(1) + '）　' + r.name);
+    prev = r.at;
+  }
+  return '直前の一手（' + (perfRunName || '終わり') + '）\n' + out.join('\n')
+    + '\n  合計 ' + (perfRun[perfRun.length - 1].at - t0).toFixed(1) + 'ms';
+}
+
 /* ------------------------------------------------------ 動きの重さを測る */
 
 /*
@@ -6635,11 +6745,12 @@ function wireView() {
     pad.hidden = !pad.hidden;
     btn.classList.toggle('on', !pad.hidden);
   };
+  // 打ち消さない監視なので、そう宣言しておく（理由は面の監視の注記を見よ）
   document.addEventListener('pointerdown', e => {
     if (pad.hidden || e.target.closest('.view')) return;
     pad.hidden = true;
     btn.classList.remove('on');
-  });
+  }, { passive: true });
 
   $('#font-picker').addEventListener('click', e => {
     const b = e.target.closest('button[data-font]');
@@ -6719,7 +6830,7 @@ function wireKeypad() {
     if (pad.hidden) return;
     if (e.target.closest('.jump')) return;
     setOpen(false);
-  });
+  }, { passive: true });          // 理由は上の注記を見よ
 
   let open = false;
   try { open = localStorage.getItem('roppo.pad') === '1'; } catch (e) { /* 任意 */ }
@@ -6767,6 +6878,12 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
+  wireDiag();
+  $('#btn-perf-run').onclick = () => {
+    const out = $('#perf-out');
+    out.hidden = false;
+    out.textContent = perfRunText();
+  };
   $('#btn-perf').onclick = () => {
     P()._perfTop = P().el.scrollTop;      // どれだけ動かしたかを添えるため
     measurePerf();
@@ -6929,7 +7046,7 @@ function bindPaneEvents(pane) {
 
   // 選択したら色バーを出す
   pane.el.addEventListener('mouseup', () => setTimeout(showSelBar, 0));
-  pane.el.addEventListener('touchend', () => setTimeout(showSelBar, 0));
+  pane.el.addEventListener('touchend', () => setTimeout(showSelBar, 0), { passive: true });
 }
 
 /** 面によらず1回だけ掛ける配線 */
@@ -6953,7 +7070,7 @@ function wireGlobal() {
     if ($('#popover').hidden) return;
     if (e.target.closest('#popover') || e.target.closest('[data-anchor]')) return;
     closePopover();
-  });
+  }, { passive: true });          // 理由は上の注記を見よ
   window.addEventListener('resize', positionPopover);
 
   $('#btn-back').onclick = () => goHistory(-1);
