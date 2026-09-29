@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v69';
+const APP_VERSION = 'v70';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -3305,6 +3305,18 @@ function renderMarkList() {
     ml.appendChild(li);
   }
   /*
+   * 固定した版に付けた注釈は、元の法令とは別の住所になる。端末ごとに片方
+   * しか持っていないと揃わないので、移せることを知らせる。
+   */
+  const revCount = countRevisionNotes();
+  const revBox = $('#rev-move-box');
+  if (revBox) {
+    revBox.hidden = !revCount;
+    const n = $('#rev-move-count');
+    if (n) n.textContent = revCount + '件';
+  }
+
+  /*
    * 別々に直したものは、放っておくと気づけない。専用の行で数を出す。
    * 押せばその一覧が出るので、そこから開いて決められる。
    */
@@ -4621,7 +4633,15 @@ function renderMarkResults() {
     const law = state.laws.find(l => l.lawId === lawId);
     const head = document.createElement('div');
     head.className = 'law-head';
-    head.innerHTML = `${esc(law ? law.lawTitle : lawId)}<span class="n">${list.length}件</span>`;
+    /*
+     * 手元に無い法令の注釈も一覧に出る（同期で他の端末から来たもの）。
+     * lawId をそのまま見出しにすると、英数字の羅列にしか見えない。
+     * 無いことを言って、住所は小さく添える。
+     */
+    head.innerHTML = law
+      ? `${esc(law.lawTitle)}<span class="n">${list.length}件</span>`
+      : `この端末に無い法令<span class="sub" style="font-size:11px;color:var(--fg-faint);`
+        + `margin-left:6px">${esc(lawId)}</span><span class="n">${list.length}件</span>`;
     box.appendChild(head);
 
     const idx = state.indexCache.get(lawId);
@@ -5238,9 +5258,16 @@ async function peekRemote() {
        * 置いてあるものの印を覗いて、別のかたまりが居れば合流を出す。
        * 同期を待たずに気づけるようにする。
        */
+      /*
+       * 見るのは端末ごとの最新世代だけ。古い世代には合流前の印が残っている
+       * ので、全部を見ると「別のかたまりが居る」と言い続けてしまう。
+       * 同期の側は元から最新だけを見ている。ここだけ揃っていなかった。
+       */
       const others = [];
-      for (const f of list) {
-        if (f.writerId === deviceId) continue;
+      for (const [w, g] of by) {
+        if (w === deviceId) continue;
+        const f = list.find(x => x.writerId === w && x.generation === g);
+        if (!f) continue;
         try {
           const s = await driveRemote().readSnapshot(f.id);
           if (s && s.datasetId && s.datasetId !== ds && !others.includes(s.datasetId)) {
@@ -5275,6 +5302,87 @@ async function showLastSync() {
     + (min < 1 ? 'たった今' : min < 60 ? min + '分前'
       : min < 60 * 24 ? Math.floor(min / 60) + '時間前'
       : new Date(at).toLocaleString('ja-JP'));
+}
+
+/* ------------------------------------- 固定版の注釈を元の法令へ移す */
+
+/*
+ * 「版を選ぶ」で固定した版は、元の法令とは別の住所を持つ。
+ *
+ *   刑事訴訟法                    323AC0000000131
+ *   刑事訴訟法（2026-08-13 施行）  323AC0000000131@<版ID>
+ *
+ * 版を固定するのはそのための機能なので、これ自体は正しい。しかし端末ごとに
+ * 片方だけを持っていると、同じ条文なのに注釈が揃わない。同期して初めて
+ * 気づいた。
+ *
+ * 移すかどうかは利用者が決める。固定版をわざと持っている場合もあるので、
+ * 黙って動かさない。移した先に注釈があるものは触らず、数だけ知らせる。
+ */
+
+/** 固定版の住所か。`<法令ID>@<版ID>` の形をしているか。 */
+const isPinnedLawId = id => typeof id === 'string' && id.includes('@');
+const baseLawIdOf = id => String(id).split('@')[0];
+
+/**
+ * 移す対象を選ぶ。DBも時計も触らない。
+ * 元の法令を持っていないものは触らない（移す先が無い）。
+ */
+function planRevisionNoteMove(notes, ranges, laws, now) {
+  const have = new Set((laws || []).map(l => l.lawId));
+  const byKey = new Map((notes || []).map(n => [n.key, n]));
+  const outNotes = [], outRanges = [];
+  let moved = 0, skipped = 0;
+
+  for (const n of notes || []) {
+    if (isTomb(n) || !isPinnedLawId(n.lawId)) continue;
+    const base = baseLawIdOf(n.lawId);
+    if (!have.has(base)) { skipped++; continue; }
+    const toKey = base + ':' + n.anchor;
+    const there = byKey.get(toKey);
+    if (there && !isTomb(there)) { skipped++; continue; }
+    outNotes.push({ ...n, key: toKey, lawId: base, updatedAt: now });
+    outNotes.push(noteTomb(n, now));
+    moved++;
+  }
+  for (const r of ranges || []) {
+    if (isTomb(r) || !isPinnedLawId(r.lawId)) continue;
+    const base = baseLawIdOf(r.lawId);
+    if (!have.has(base)) { skipped++; continue; }
+    // 文言注釈は id で決まるので、鍵の衝突は起きない。住所だけ移す
+    outRanges.push({ ...r, lawId: base, updatedAt: now });
+    moved++;
+  }
+  return { notes: outNotes, ranges: outRanges, moved, skipped };
+}
+
+/** いくつ移せるか数える。知らせを出すかどうかの判断に使う。 */
+function countRevisionNotes() {
+  const plan = planRevisionNoteMove([...state.notes.values()],
+    [...state.ranges.values()], state.laws, Date.now());
+  return plan.moved;
+}
+
+async function doRevisionNoteMove() {
+  const now = Date.now();
+  const plan = planRevisionNoteMove([...state.notes.values()],
+    [...state.ranges.values()], state.laws, now);
+  if (!plan.moved) { toast('移せるものがありません'); return; }
+  if (!confirm('固定した版に付けた注釈 ' + plan.moved + '件を、元の法令へ移します。'
+    + '\n\n移す前にバックアップを取っておくと安全です。よろしいですか？')) return;
+  try {
+    await store.applyBulk({ notes: plan.notes, ranges: plan.ranges });
+  } catch (e) {
+    toast('移せませんでした（何も変えていません）: ' + e.message);
+    return;
+  }
+  await loadNotes();
+  await loadRanges();
+  paintNotes();
+  paintRanges();
+  renderMarkList();
+  toast(plan.moved + '件を元の法令へ移しました'
+    + (plan.skipped ? '（移せなかった ' + plan.skipped + '件はそのまま）' : ''));
 }
 
 /* --------------------------------------------- 条の注釈を第1項へ移す */
@@ -6190,6 +6298,7 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
+  $('#btn-rev-move').onclick = () => doRevisionNoteMove();
   $('#btn-join').onclick = () => doJoin();
   $('#btn-pick').onclick = () => {
     gToken = null;                       // いまのを捨ててから選び直す
