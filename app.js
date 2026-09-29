@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v68';
+const APP_VERSION = 'v69';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -4913,7 +4913,8 @@ function driveRemote() {
 async function syncOnce(remote, opts) {
   const o = opts || {};
   const say = o.onStep || (() => {});
-  const out = { ok: false, why: '', read: 0, skipped: [], conflicts: 0, published: false };
+  const out = { ok: false, why: '', read: 0, skipped: [], conflicts: 0,
+    published: false, otherDatasets: [] };
 
   /*
    * 端末の名前が無いまま進まない。名前は版の項目名にもファイル名にもなるので、
@@ -4971,6 +4972,8 @@ async function syncOnce(remote, opts) {
   for (const s of all) {
     if (s.datasetId && s.datasetId !== datasetId) {
       out.skipped.push(s.writerId);                  // 別のかたまり。混ぜない
+      // どのかたまりを飛ばしたかは持ち帰る。合流するかどうかは利用者が決める
+      if (!out.otherDatasets.includes(s.datasetId)) out.otherDatasets.push(s.datasetId);
       continue;
     }
     incoming.push(s);
@@ -5086,6 +5089,7 @@ async function runSync() {
   try {
     const r = await syncOnce(driveRemote(), { onStep: s => setSyncState(s) });
     toast(syncSummary(r));
+    offerJoin(r.otherDatasets);
     if (r.ok) {
       // 置けたら古い世代を片付ける。失敗しても害はない
       try { await driveRemote().sweep(deviceId, 2); } catch (e) { /* 次に片付く */ }
@@ -5116,6 +5120,44 @@ async function resumeSync() {
 function setSyncState(s) {
   const el = $('#sync-state');
   if (el) el.textContent = s || '';
+}
+
+/*
+ * 別のかたまりに分かれてしまったときに、合流する。
+ *
+ * 印は本来、最初の1台が決めて後から来た端末が合わせるものである。しかし
+ * 両方が先に自分の印を作ってしまうと、互いを「別のかたまり」として飛ばし合い、
+ * いつまでも揃わない。実際にそうなった。
+ *
+ * どちらに合わせても中身は失われない。合わせた側も、次に置くときは自分の
+ * 持っているもの全部を新しい印で出すためである。だから片方を選べばよい。
+ * ただし黙って混ぜない。混ぜてはいけないものだった場合に取り返しがつかない。
+ */
+let joinTarget = '';
+
+function offerJoin(ids) {
+  const btn = $('#btn-join');
+  if (!btn) return;
+  if (!ids || ids.length !== 1) { joinTarget = ''; btn.hidden = true; return; }
+  joinTarget = ids[0];
+  btn.hidden = false;
+  btn.textContent = '相手のかたまりに合流する';
+}
+
+async function doJoin() {
+  if (!joinTarget) return;
+  const mine = await loadDatasetId();
+  if (!confirm('この端末のかたまりを、相手のものに合わせます。\n\n'
+    + 'いま: ' + (mine || '（無し）') + '\n'
+    + 'あと: ' + joinTarget + '\n\n'
+    + '中身は失われません。よろしいですか？')) return;
+  try { await store.putMeta(DATASET_KEY, joinTarget); }
+  catch (e) { toast('印を変えられません: ' + e.message); return; }
+  const btn = $('#btn-join');
+  if (btn) btn.hidden = true;
+  joinTarget = '';
+  toast('合流しました。同期します…');
+  await runSync();
 }
 
 /*
@@ -5192,6 +5234,25 @@ async function peekRemote() {
       for (const [w, g] of by) {
         lines.push('  ' + w + '　最新の世代 ' + g + (w === deviceId ? '　（この端末）' : ''));
       }
+      /*
+       * 置いてあるものの印を覗いて、別のかたまりが居れば合流を出す。
+       * 同期を待たずに気づけるようにする。
+       */
+      const others = [];
+      for (const f of list) {
+        if (f.writerId === deviceId) continue;
+        try {
+          const s = await driveRemote().readSnapshot(f.id);
+          if (s && s.datasetId && s.datasetId !== ds && !others.includes(s.datasetId)) {
+            others.push(s.datasetId);
+          }
+        } catch (e) { /* 読めないものは飛ばす */ }
+      }
+      if (others.length) {
+        lines.push('※ 別のかたまりが ' + others.length + '件あります: ' + others.join('、'));
+        lines.push('　 「相手のかたまりに合流する」を押すと揃います');
+      }
+      offerJoin(others);
     }
     if (box) box.textContent = lines.join('\n');
   } catch (e) {
@@ -6129,6 +6190,7 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
+  $('#btn-join').onclick = () => doJoin();
   $('#btn-pick').onclick = () => {
     gToken = null;                       // いまのを捨ててから選び直す
     toast('アカウントを選んでください…');
