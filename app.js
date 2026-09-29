@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v80';
+const APP_VERSION = 'v81';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -2376,10 +2376,14 @@ function scrollToAnchor(anchor, edit, pane) {
 async function selectAnchor(anchor, edit, pane) {
   pane = pane || P();
   if (pane !== P()) setActivePane(pane.idx);
+  perfAt('書きかけの確定へ');
   await flushSave();
+  perfAt('書きかけを確定した');
   $$('.sel').forEach(e => e.classList.remove('sel'));
+  perfAt('前の選択を外した');
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
   if (el) el.classList.add('sel');
+  perfAt('選んだ');
   state.selected = anchor;
   if (edit) openPopover();
   else closePopoverKeepSelection();
@@ -2420,8 +2424,11 @@ function openPopover() {
   if (!P().current || !state.selected) { closePopover(); return; }
   $('#pop-anchor').textContent = anchorLabel(state.selected);
   pop.hidden = false;
+  perfAt('注釈欄を出した');
   renderNotePane();
+  perfAt('注釈欄の中身');
   positionPopover();
+  perfAt('注釈欄の位置');
 }
 
 /** 文言メモの編集。条項号の注釈とは別の内容を同じパネルに出す。 */
@@ -6939,6 +6946,7 @@ function wire() {
 
 function bindPaneEvents(pane) {
   pane.el.addEventListener('click', e => {
+    perfBegin('本文を押す', e);                 // 切り分け用（仮）
     const ref = e.target.closest('a.ref[data-target]');
     if (ref) {
       e.preventDefault();
@@ -6957,16 +6965,19 @@ function bindPaneEvents(pane) {
       return;
     }
     hideSlashBar();
+    perfAt('印の判定');
 
     // 文字を選択している最中は編集を開かない（範囲注釈を付けたいだけのことが多い）
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
+    perfAt('選択の確認');
 
     /*
      * 「。」の近くを押したら、区切りの印を出す入口を開く。
      * 本文のそれ以外の場所は、これまでどおり何も起きない。
      */
     const near = sentenceEndNear(e.clientX, e.clientY);
+    perfAt('句点さがし');
     if (near) {
       // すでに印が付いていれば、その印の編集として開く
       const cur = P().current && existingSlash(P().current.lawId, near.anchor, near.text, near.nth);
@@ -7009,6 +7020,7 @@ function bindPaneEvents(pane) {
        */
       const host = num.closest('[data-anchor]');
       if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
+      perfDone();
       return;
     }
 

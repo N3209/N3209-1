@@ -737,11 +737,11 @@ ruby rt { font-size: .5em; font-weight: normal; }
 [data-paren="dim"] .paren.p1 { color: color-mix(in srgb, var(--fg) 52%, var(--bg)); }
 [data-paren="dim"] .paren.p2 { color: color-mix(in srgb, var(--fg) 38%, var(--bg)); }
 [data-paren="dim"] .paren.p3 { color: color-mix(in srgb, var(--fg) 30%, var(--bg)); }
-/* 括弧の中の参照リンクも一緒に薄くする。下線だけ残ると浮いて見える。 */
-[data-paren="dim"] .paren a.ref { color: inherit; border-bottom-color: currentColor; opacity: .7; }
-@media (hover: hover) and (pointer: fine) {
-  [data-paren="dim"] .paren a.ref:hover { color: var(--accent); opacity: 1; }
-}
+/*
+ * 括弧の中の参照リンクは、包みのほうがリンクの内側に入る（会社法で697件、
+ * 逆は0件）。a.ref { color: inherit } なので、包みの薄い色がそのまま出る。
+ * かつて .paren a.ref に当てていたが、その形では一件も当たっていなかった。
+ */
 
 /*
  * 条文参照。本文の見た目を壊さないよう、ふだんは薄い点線だけにする。
@@ -775,6 +775,8 @@ a.ref {
 [data-diag~="norel"] [data-anchor] { position: static; }
 [data-diag~="nodot"] a.ref { border-bottom: none; }
 [data-diag~="notrans"] * { transition: none !important; }
+/* 包みは残したまま、薄い色だけ止める。DOMの効きと色の効きを分けるため */
+[data-diag~="nodim"] .paren { color: inherit !important; }
 /* ▲ ここまで */
 
 /*
