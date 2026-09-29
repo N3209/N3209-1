@@ -5120,6 +5120,29 @@ async function peekRemote() {
     if (who) lines.push('繋がっているアカウント: ' + who);
     else lines.push('繋がっているアカウント: （分かりません）');
     lines.push('この端末: ' + deviceId + (ds ? '　かたまり: ' + ds : '　かたまり: まだ無し'));
+
+    /*
+     * 名前で絞らずに、置いてあるものを生で見せる。
+     *
+     * 「置いたはずなのに見えない」とき、置けていないのか、名前の形が合わずに
+     * こちらが弾いているのかが分からなかった。生の数と名前を出せば分かる。
+     */
+    try {
+      const r = await fetch('https://www.googleapis.com/drive/v3/files'
+        + '?spaces=appDataFolder&pageSize=100&fields=files(id,name,size,modifiedTime)',
+        { headers: { Authorization: 'Bearer ' + gToken.value } });
+      const d = await r.json();
+      const fs2 = (d && d.files) || [];
+      lines.push('--- 隠し場所の中身（名前で絞らず） ' + fs2.length + '件 ---');
+      for (const f of fs2.slice(0, 20)) {
+        lines.push('  ' + f.name + '　' + (f.size || '?') + 'バイト　' + (f.modifiedTime || ''));
+      }
+      if (!fs2.length) lines.push('  （空。置けていません）');
+    } catch (e) {
+      lines.push('--- 生の一覧を取れません: ' + (e && e.message ? e.message : e));
+    }
+    lines.push('--- 同期のファイルとして読めたもの ---');
+
     if (!list.length) {
       lines.push('置いてあるもの: なし');
       lines.push('（相手がまだ同期していないか、別の Google アカウントを見ています）');
