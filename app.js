@@ -4776,8 +4776,13 @@ function apGisGo() {
 function apPanel() {
   const d = document.createElement('div');
   d.id = 'ap-panel';
-  d.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg,#fff);'
-    + 'color:var(--fg,#111);font:13px/1.7 system-ui;padding:14px;overflow:auto';
+  /*
+   * 全画面で覆うと「新しい版があります」の知らせが裏に隠れて押せなくなる。
+   * 実際にそうなった。上を少し空けて、下からせり上がる形にする。
+   */
+  d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;top:54px;z-index:60;'
+    + 'background:var(--bg,#fff);color:var(--fg,#111);font:13px/1.7 system-ui;'
+    + 'padding:14px;overflow:auto;border-top:1px solid var(--line,#ccc)';
   d.innerHTML = '<h2 style="margin:0 0 8px;font-size:15px">認証の往復を試す（仮）</h2>'
     + '<p style="margin:0 0 10px;color:#666">いまの起動の形: <b>' + esc(apMode()) + '</b><br>'
     + '戻り先: <code>' + esc(AP_REDIRECT) + '</code></p>'
@@ -4817,8 +4822,29 @@ function apPanel() {
   apSay('用意できた');
 }
 
-/** 起動のときに呼ぶ。?auth=1 が付いているか、Google から帰ってきたときだけ動く。 */
+/*
+ * 表示設定の中に入口を置く。
+ *
+ * manifest の start_url が './' なので、?auth=1 を付けてホーム画面に追加しても
+ * その印は消える。アイコンから起動すると普通のアプリが出る。しかし
+ * 確かめたいのは「ホーム画面から起動した状態」での往復なので、そこから
+ * 実証画面へ行けないと意味がない。同じ場所への移動なので standalone のまま。
+ */
+function apAddEntry() {
+  const host = $('#viewpad') || document.body;
+  if (!host || $('#ap-entry')) return;
+  const b = document.createElement('button');
+  b.id = 'ap-entry';
+  b.className = 'mini';
+  b.textContent = '認証の往復を試す（仮）';
+  b.style.cssText = 'margin-top:14px;opacity:.7';
+  b.onclick = () => { location.href = location.pathname + '?auth=1'; };
+  host.appendChild(b);
+}
+
+/** 起動のときに呼ぶ。?auth=1 が付いているか、Google から帰ってきたときだけ出す。 */
 async function authProbe() {
+  apAddEntry();          // 【仮】確かめ終わったら、この節ごと消す
   const frag = location.hash || '';
   const back = /[#&](access_token|error)=/.test(frag);
   const asked = /[?&]auth=1/.test(location.search);
