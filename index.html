@@ -291,7 +291,24 @@
   <form method="dialog" class="dlg-form">
     <h2>書き出しと復元</h2>
 
-    <p class="note-label">バックアップ</p>
+    <p class="note-label">端末どうしで同期</p>
+    <p class="hint" style="margin:0 0 8px">
+      タグ・メモ・マーク・並び順を、Google ドライブ経由でほかの端末と揃えます。
+      法令の本文は送りません（e-Gov から取り直せるため）。
+      置き場所はこのアプリ専用の隠し場所で、ドライブの画面には出ません。
+    </p>
+    <div class="row">
+      <button type="button" id="btn-sync" class="primary">同期する</button>
+      <span id="sync-state" class="saved-at"></span>
+    </div>
+    <p class="hint" style="margin:8px 0 0">
+      Google のアカウント（複数ログインしているとき）<br>
+      <input id="sync-account" type="text" placeholder="どのアカウントで接続するか"
+             autocomplete="off" style="width:min(100%,300px)">
+      <button type="button" id="sync-account-save" class="mini">覚える</button>
+    </p>
+
+    <p class="note-label" style="margin-top:16px">バックアップ</p>
     <p class="hint" style="margin:0 0 8px">
       取り込んだ全法令（無加工のXML）と、すべてのタグ・メモ・マークを1ファイルにまとめます。
       条文は e-Gov から取り直せますが、注釈は取り返せません。

@@ -4922,6 +4922,206 @@ async function authProbe() {
 }
 
 
+
+/* ------------------------------------------------- 同期：Google の認可 */
+
+/*
+ * トークンを取る。画面ごと Google へ移り、戻ってくる。
+ *
+ * なぜポップアップを使わないか。iPhone でホーム画面から起動していると、
+ * ポップアップが表示されずに待ち続けることがある。画面遷移なら、その形でも
+ * 元の保存領域に戻れることを実機で確かめた。
+ *
+ * なぜ Google のスクリプトを読まないか。実行時の依存を増やさないため。
+ * 読むのは同期のときだけ、とすることもできるが、遷移で足りるなら要らない。
+ *
+ * トークンはメモリにだけ置く。localStorage には書かない。1時間で切れるので、
+ * 切れたら取り直す。往復の途中であることは sessionStorage に印で残す。
+ */
+const G_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
+const G_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const G_CLIENT_ID = AP_CLIENT_ID;          // 実証で使ったものと同じ
+const G_STATE = 'roppo.g.state';
+const G_RESUME = 'roppo.g.resume';
+const G_ACCOUNT = 'roppo.g.account';
+
+let gToken = null;         // { value, expiresAt }
+
+const gRedirect = () => location.origin + location.pathname;
+
+function gAlive() {
+  return !!(gToken && gToken.value && gToken.expiresAt > Date.now() + 30000);
+}
+
+/** どのアカウントを使うか。複数ログインしていると、指定しないと決まらない。 */
+function gAccount() {
+  try { return localStorage.getItem(G_ACCOUNT) || ''; } catch (e) { return ''; }
+}
+function setGAccount(v) {
+  try { localStorage.setItem(G_ACCOUNT, String(v || '').trim()); } catch (e) { /* 任意 */ }
+}
+
+/** 画面ごと Google へ移る。戻ってきたら resumeAfterAuth が受ける。 */
+function gGo(resume) {
+  const st = newDeviceId();
+  try {
+    sessionStorage.setItem(G_STATE, st);
+    sessionStorage.setItem(G_RESUME, resume || '');
+  } catch (e) { /* 戻ってから state を確かめられないだけ */ }
+  location.href = G_AUTH
+    + '?client_id=' + encodeURIComponent(G_CLIENT_ID)
+    + '&redirect_uri=' + encodeURIComponent(gRedirect())
+    + '&response_type=token'
+    + '&scope=' + encodeURIComponent(G_SCOPE)
+    + '&state=' + encodeURIComponent(st)
+    + '&include_granted_scopes=true'
+    + (gAccount() ? '&login_hint=' + encodeURIComponent(gAccount()) : '');
+}
+
+/*
+ * 戻ってきたところ。起動のいちばん早いところで呼ぶ。
+ * フラグメントは読んだらすぐ消す。履歴やログにトークンを残さない。
+ */
+function takeAuthFragment() {
+  const frag = location.hash || '';
+  if (!/[#&](access_token|error)=/.test(frag)) return null;
+  const q = new URLSearchParams(frag.replace(/^#/, ''));
+  try { history.replaceState(null, '', location.pathname + location.search); }
+  catch (e) { /* 消せなくても読み込みは進む */ }
+
+  let want = '';
+  try { want = sessionStorage.getItem(G_STATE) || ''; } catch (e) { /* 下で弾く */ }
+  try { sessionStorage.removeItem(G_STATE); } catch (e) { /* 任意 */ }
+
+  const err = q.get('error');
+  if (err) return { ok: false, why: err };
+  // 送った印と一致しない返事は受け取らない（すり替え対策）
+  if (!want || q.get('state') !== want) return { ok: false, why: 'state が合わない' };
+
+  const tok = q.get('access_token');
+  const sec = Number(q.get('expires_in') || 0);
+  if (!tok) return { ok: false, why: 'トークンが来なかった' };
+  gToken = { value: tok, expiresAt: Date.now() + Math.max(60, sec) * 1000 };
+  return { ok: true, why: '' };
+}
+
+/** 同期の途中で飛んだのか。戻ってきたときに見る。 */
+function takeResume() {
+  let v = '';
+  try { v = sessionStorage.getItem(G_RESUME) || ''; } catch (e) { /* 無ければ空 */ }
+  try { sessionStorage.removeItem(G_RESUME); } catch (e) { /* 任意 */ }
+  return v;
+}
+
+
+/* ------------------------------------------------- 同期：Drive の通信先 */
+
+/*
+ * Drive の appDataFolder に置く。アプリ専用の隠し場所で、Drive の画面には
+ * 出ない。ほかのファイルには一切触らない（スコープが drive.appdata だけ）。
+ *
+ * ファイル名に発行元と世代を入れる。一覧だけで「どの端末の何世代目か」が
+ * 分かるので、中身を読まずに済む。
+ *
+ *   roppo-<writerId>-<generation>.json
+ *
+ * 名前は一意ではない（同じ名前のものが作れてしまう）ので、名前だけを頼りに
+ * しない。中身にも writerId と generation を入れてあり、読んだ方を正とする。
+ */
+const DRIVE_API = 'https://www.googleapis.com/drive/v3/files';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+const SNAP_RE = /^roppo-([A-Za-z0-9_-]+)-(\d+)\.json$/;
+
+function driveRemote() {
+  const auth = () => {
+    if (!gAlive()) throw new Error('認可が切れています');
+    return { Authorization: 'Bearer ' + gToken.value };
+  };
+  const check = async r => {
+    if (r.ok) return r;
+    let msg = 'HTTP ' + r.status;
+    try {
+      const d = await r.json();
+      if (d && d.error && d.error.message) msg = d.error.message;
+    } catch (e) { /* 本文が読めないときは番号だけ */ }
+    if (r.status === 401 || r.status === 403) gToken = null;   // 取り直させる
+    throw new Error(msg);
+  };
+
+  return {
+    /*
+     * 置いてあるものの一覧。
+     * ページが短いことを終わりの合図にしない。nextPageToken を最後まで辿る。
+     */
+    async listSnapshots() {
+      const out = [];
+      let page = '';
+      for (let i = 0; i < 50; i++) {        // 念のための上限
+        const u = DRIVE_API + '?spaces=appDataFolder&pageSize=100'
+          + '&fields=nextPageToken,files(id,name,modifiedTime)'
+          + (page ? '&pageToken=' + encodeURIComponent(page) : '');
+        const r = await check(await fetch(u, { headers: auth() }));
+        const d = await r.json();
+        for (const f of (d.files || [])) {
+          const m = SNAP_RE.exec(f.name || '');
+          if (!m) continue;
+          out.push({ id: f.id, name: f.name, writerId: m[1],
+            generation: Number(m[2]), modifiedTime: f.modifiedTime });
+        }
+        page = d.nextPageToken || '';
+        if (!page) break;
+      }
+      return out;
+    },
+
+    async readSnapshot(id) {
+      const r = await check(await fetch(
+        DRIVE_API + '/' + encodeURIComponent(id) + '?alt=media', { headers: auth() }));
+      const text = await r.text();
+      try { return JSON.parse(text); }
+      catch (e) { throw new Error('JSON として読めません'); }
+    },
+
+    /*
+     * 新しいファイルとして置く。既にあるものは書き換えない。
+     * 途中で失敗しても、前の世代がそのまま残る。
+     */
+    async createSnapshot(snap) {
+      const name = 'roppo-' + snap.writerId + '-' + snap.generation + '.json';
+      const bound = 'b' + newDeviceId();
+      const meta = { name, parents: ['appDataFolder'], mimeType: 'application/json' };
+      const body = '--' + bound + '\r\n'
+        + 'Content-Type: application/json; charset=UTF-8\r\n\r\n'
+        + JSON.stringify(meta) + '\r\n'
+        + '--' + bound + '\r\n'
+        + 'Content-Type: application/json; charset=UTF-8\r\n\r\n'
+        + JSON.stringify(snap) + '\r\n'
+        + '--' + bound + '--';
+      const r = await check(await fetch(
+        DRIVE_UPLOAD + '?uploadType=multipart&fields=id,name',
+        { method: 'POST',
+          headers: { ...auth(), 'Content-Type': 'multipart/related; boundary=' + bound },
+          body }));
+      return await r.json();
+    },
+
+    /** 古い世代を片付ける。自分の最新2つだけ残す。他の端末のものは触らない。 */
+    async sweep(writerId, keep) {
+      const list = await this.listSnapshots();
+      const mine = list.filter(f => f.writerId === writerId)
+        .sort((a, b) => b.generation - a.generation);
+      const drop = mine.slice(Math.max(1, keep || 2));
+      for (const f of drop) {
+        try {
+          await fetch(DRIVE_API + '/' + encodeURIComponent(f.id),
+            { method: 'DELETE', headers: auth() });
+        } catch (e) { /* 消せなくても害はない。次に片付く */ }
+      }
+      return drop.length;
+    },
+  };
+}
+
 /* ----------------------------------------------------- 同期：手順 */
 
 /*
@@ -5063,6 +5263,85 @@ function syncSummary(r) {
   if (r.conflicts) parts.push('別々に直したものが ' + r.conflicts + '件（両方残しました）');
   if (r.skipped.length) parts.push('別のかたまり ' + r.skipped.length + '件は混ぜていません');
   return parts.join('　/　');
+}
+
+
+/* ----------------------------------------------------- 同期：入口 */
+
+/*
+ * 同期の入口。押したときにトークンが無ければ、画面ごと Google へ移る。
+ * 戻ってきたら resumeSync が受けて、そのまま続きをやる。押すのは一度でよい。
+ *
+ * オフラインでは何も起きないので、そう言う。読むのは今までどおりできる。
+ */
+let syncing = false;
+
+async function doSync() {
+  if (syncing) return;
+  if (!navigator.onLine) { toast('通信できません。読むのはこのまま続けられます'); return; }
+
+  if (!gAlive()) {
+    // 取りに行く。戻ってきたら resumeSync が続きをやる
+    toast('Google に接続します…');
+    gGo('sync');
+    return;
+  }
+  await runSync();
+}
+
+async function runSync() {
+  if (syncing) return;
+  syncing = true;
+  setSyncState('同期しています…');
+  try {
+    const r = await syncOnce(driveRemote(), { onStep: s => setSyncState(s) });
+    toast(syncSummary(r));
+    if (r.ok) {
+      // 置けたら古い世代を片付ける。失敗しても害はない
+      try { await driveRemote().sweep(deviceId, 2); } catch (e) { /* 次に片付く */ }
+    }
+  } catch (e) {
+    toast('同期できませんでした: ' + (e && e.message ? e.message : e));
+  } finally {
+    syncing = false;
+    await showLastSync();
+  }
+}
+
+/** 戻ってきたときに呼ぶ。同期の途中で飛んだなら、そのまま続ける。 */
+async function resumeSync() {
+  const got = takeAuthFragment();
+  const resume = takeResume();
+  if (!got) return;
+  if (!got.ok) {
+    toast('Google に接続できませんでした: ' + got.why
+      + (got.why === 'access_denied' ? '（許可が必要です）' : ''));
+    return;
+  }
+  if (resume === 'sync') await runSync();
+  else toast('Google に接続しました');
+}
+
+function setSyncState(s) {
+  const el = $('#sync-state');
+  if (el) el.textContent = s || '';
+}
+
+/** 「最後に同期: …」を出す。 */
+async function showLastSync() {
+  const el = $('#sync-state');
+  if (!el) return;
+  let at = 0;
+  try {
+    const rec = await store.getMeta(LAST_SYNC_KEY);
+    at = Number((rec && rec.value) || 0);
+  } catch (e) { /* 出さないだけ */ }
+  if (!at) { el.textContent = 'まだ同期していません'; return; }
+  const min = Math.floor((Date.now() - at) / 60000);
+  el.textContent = '最後に同期: '
+    + (min < 1 ? 'たった今' : min < 60 ? min + '分前'
+      : min < 60 * 24 ? Math.floor(min / 60) + '時間前'
+      : new Date(at).toLocaleString('ja-JP'));
 }
 
 /* --------------------------------------------- 条の注釈を第1項へ移す */
@@ -5938,6 +6217,13 @@ function wire() {
     if (e.target && e.target.id === 'btn-add-law-2') openAdd();
   });
 
+  $('#btn-sync').onclick = () => doSync();
+  $('#sync-account').value = gAccount();
+  $('#sync-account-save').onclick = () => {
+    setGAccount($('#sync-account').value);
+    toast(gAccount() ? 'アカウントを覚えました' : 'アカウントの指定を外しました');
+  };
+
   $('#btn-export').onclick = openExportDialog;
   $('#exp-backup').onclick = exportBackup;
   $('#exp-restore').onclick = () => $('#restore-file').click();
@@ -6261,6 +6547,7 @@ function registerServiceWorker() {
   switchSheetTab(sheetTab);
   placeControls();
   await authProbe();          // 【仮】認証の往復を試す。確かめ終わったら消す
+  await resumeSync();         // Google から戻ってきたなら、同期の続きをやる
   await loadDeviceId();
   await loadLawOrder();
   loadAmendState();
@@ -6272,6 +6559,7 @@ function registerServiceWorker() {
   let last = null;
   try { last = localStorage.getItem('roppo.last'); } catch (e) { /* 使えなくても支障ない */ }
   loadLastPos();
+  showLastSync();
   const first = (last && state.laws.some(l => l.lawId === last)) ? last
     : (state.laws.length ? state.laws[0].lawId : null);
   if (first) {
