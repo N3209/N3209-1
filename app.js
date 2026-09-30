@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v87';
+const APP_VERSION = 'v88';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1558,6 +1558,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   paintRangesIn(pane);
   closePopover();                        // 前の法令の注釈パネルは閉じる
   hideSlashBar();                        // 別の法令に印を付けてしまわないように
+  hideRefBar();                          // 行き先を選ぶバーも、前の法令のもの
   // 絞り込みは法令をまたいでも保つ。同じタグを別の法令で続けて見たいため。
   applyFilter(pane);
   renderFilterPicker();
@@ -2441,7 +2442,8 @@ function openPopover() {
 
 /** 文言メモの編集。条項号の注釈とは別の内容を同じパネルに出す。 */
 function openRangePopover(id) {
-  const rec = state.ranges.get(id);
+  // id を渡すのが本筋だが、レコードを渡す呼び方を一度取り違えたので受ける
+  const rec = state.ranges.get(typeof id === 'string' ? id : (id && id.id));
   if (!rec) return;
   state.selected = rec.anchor;
   $$('.sel').forEach(e => e.classList.remove('sel'));
@@ -3949,6 +3951,40 @@ function showSlashBar(atRect, current) {
 
 function hideSlashBar() { $('#slashbar').hidden = true; slashPending = null; }
 
+/*
+ * 印を付けた参照リンクを押したときに出すバー。
+ * 置き方は区切りの印のバーと同じ（下に出し、入らなければ上へ回す）。
+ */
+let refPending = null;
+
+function showRefBar(atRect) {
+  const bar = $('#refbar');
+  bar.hidden = false;
+  const w = bar.offsetWidth, h = bar.offsetHeight, pad = 12;
+  bar.style.left = Math.min(Math.max(pad, atRect.left + atRect.width / 2 - w / 2),
+    window.innerWidth - w - pad) + 'px';
+  const barEl = $('#bottombar');
+  const floor = window.innerHeight - pad - (barEl && !barEl.hidden ? barEl.offsetHeight : 0);
+  let top = atRect.bottom + 10;
+  if (top + h > floor) top = atRect.top - h - 10;
+  bar.style.top = Math.max(pad, top) + 'px';
+}
+
+function hideRefBar() { $('#refbar').hidden = true; refPending = null; }
+
+function applyRefPick(kind) {
+  const p = refPending;
+  hideRefBar();
+  if (!p) return;
+  /*
+   * 開いたときと同じ法令・同じ面でなければ何もしない。
+   * バーを出したまま別の法令へ移ると、別の条文を指すことになる。
+   */
+  if (p.lawId && (!P().current || p.lawId !== P().current.lawId || p.paneIdx !== P().idx)) return;
+  if (kind === 'go') { if (p.target.isConnected) followRef(p.target, false); return; }
+  openRangePopover(p.id);
+}
+
 async function applySlash(kind) {
   const p = slashPending;
   hideSlashBar();
@@ -4873,7 +4909,8 @@ function renderMarkResults() {
         if (m.kind === 'note') { await selectAnchor(m.anchor, true); return; }
         // 文言に付けたものは、その印のパネルを開く（条項号の注釈欄とは別）
         const rec = state.ranges.get(m.id);
-        if (rec && !isSlash(rec)) openRangePopover(rec);
+        // 渡すのは id。レコードを渡していたので、一覧から開けなかった
+        if (rec && !isSlash(rec)) openRangePopover(rec.id);
       };
       box.appendChild(d);
     }
@@ -6700,12 +6737,33 @@ function wire() {
 function bindPaneEvents(pane) {
   pane.el.addEventListener('click', e => {
     const ref = e.target.closest('a.ref[data-target]');
+    const mk = e.target.closest('mark[data-range-id]');
+
+    /*
+     * 参照リンクの文字に文言の印を付けると、押す先が二つになる。
+     *
+     * 前はリンクを先に見ていたので、印を付けた参照は永久に押せなかった。
+     * 消すこともできない（付けた本人の印に届かないのが一番まずい）。
+     * かといってリンクを捨てるのも違う。どちらかを選ばせる。
+     *
+     * 印の無い参照リンクは、これまでどおり押せばすぐ飛ぶ。迷いが無いので
+     * 選ばせる必要もない。バーが出るのは、印を付けた参照だけである。
+     */
+    if (ref && mk) {
+      e.preventDefault();
+      hideSlashBar();
+      refPending = { target: ref, id: mk.dataset.rangeId,
+        lawId: P().current && P().current.lawId, paneIdx: pane.idx };
+      showRefBar(mk.getBoundingClientRect());
+      return;
+    }
+    hideRefBar();
+
     if (ref) {
       e.preventDefault();
       followRef(ref, e.ctrlKey || e.metaKey || e.shiftKey);
       return;
     }
-    const mk = e.target.closest('mark[data-range-id]');
     if (mk) { openRangePopover(mk.dataset.rangeId); return; }
 
     // すでに付いている区切りの印を押した
@@ -6821,6 +6879,11 @@ function wireGlobal() {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) hideSelBar();
   });
+  $('#refbar').addEventListener('click', e => {
+    const b = e.target.closest('button[data-ref]');
+    if (b) applyRefPick(b.dataset.ref);
+  });
+
   $('#selbar').addEventListener('pointerdown', e => e.preventDefault());   // 選択を保つ
   $('#selbar').addEventListener('click', e => {
     const b = e.target.closest('button');
@@ -6837,6 +6900,13 @@ function wireGlobal() {
     if (e.target.closest('#popover') || e.target.closest('[data-anchor]')) return;
     closePopover();
   }, { passive: true });          // 理由は上の注記を見よ
+
+  // 行き先を選ぶバーは、よそを押したら引っ込める
+  document.addEventListener('pointerdown', e => {
+    if ($('#refbar').hidden) return;
+    if (e.target.closest('#refbar') || e.target.closest('a.ref')) return;
+    hideRefBar();
+  }, { passive: true });
   window.addEventListener('resize', positionPopover);
 
   $('#btn-back').onclick = () => goHistory(-1);
