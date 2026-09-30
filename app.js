@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v88';
+const APP_VERSION = 'v89';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -3670,29 +3670,64 @@ function renderNotePane() {
  */
 async function saveNote(note) {
   note.updatedAt = Date.now();
+
+  let old = null;
+  try { old = await store.getNote(note.key); }
+  catch (e) { /* 読めなくても保存は続ける */ }
+
   /*
-   * 前の版を引き継いでから1つ進める。
+   * 版の継ぎ方は、相手が墓石か、生きている記録かで分ける。
    *
-   * 消した印（墓石）は state.notes に載せていないので、同じ場所に書き直すと
-   * 版が 1 から数え直しになる。ところが他の端末には消した印がもっと進んだ版で
-   * 残っているため、次の同期では「消した」が勝ち、書き直した中身が消える。
-   * DBの記録は墓石も返すので、そこから継ぐ。
+   * 墓石なら継ぐ。消した印は state.notes に載せていないので、同じ場所に
+   * 書き直すと版が 1 から数え直しになる。他の端末には進んだ版の墓石が
+   * 残っているため、同期すると「消した」が勝ち、書き直した中身が消える。
+   * 墓石には中身が無いので、継いでも失うものがない。
+   *
+   * 生きている記録は継がない。継ぐと、こちらが見ていない中身を
+   * 「承知したうえで書き換えた」ことになり、相手の編集を黙って消す。
+   * これを継いでいたため、同期で受け取ったメモが、開いたままの古い編集欄から
+   * 色を1つ変えるだけで消えていた（衝突の候補も残らない）。
    */
-  let base = note.version;
-  try {
-    const old = await store.getNote(note.key);
-    if (old) base = vvMerge(base, old.version);
-  } catch (e) { /* 読めなくても保存は続ける。版が戻るだけで、消しはしない */ }
+  const base = (old && isTomb(old)) ? vvMerge(note.version, old.version) : note.version;
   note.version = vvBump(base, deviceId);
+
+  const empty = !note.tags.length && !(note.memo || '').trim()
+    && !(note.summary || '').trim() && !note.color;
+  // 消した印を残す。本当に消すと、古いバックアップから復活する
+  let out = empty ? noteTomb(note, note.updatedAt) : note;
+
+  /*
+   * こちらの版が相手を含んでいないなら、相手を見ていない。
+   * 片方を捨てず、両方残す。
+   *
+   * 表に出すのは、いま打った方にする。時計の前後で決めると、打った文字が
+   * 候補に回って画面から消える（相手の時計が進んでいれば現に起きる）。
+   * 版は相手のぶんを取り込まない。取り込むと「承知した」ことになり、
+   * 次の突き合わせで相手の候補が落とされる。そこが①の副作用の正体だった。
+   *
+   * ただし、こちらが空にした（墓石）ときは同期と同じ決まりに任せる。
+   * 墓石を表に出すと、相手の生きた中身が画面から消えてしまう。
+   */
+  let merged = false;
+  if (old && !isTomb(old) && !vvDominates(note.version, old.version)) {
+    if (isTomb(out)) {
+      out = mergeRecord(old, out);
+    } else {
+      const { alts: _mine, ...mineClean } = out;
+      const { alts: _old, ...oldClean } = old;
+      const alts = pruneAlts([oldClean, ...collectAlts(old, out)], mineClean);
+      out = alts.length ? { ...mineClean, alts } : mineClean;
+    }
+    merged = true;
+  }
+
   try {
-    if (!note.tags.length && !(note.memo || '').trim()
-      && !(note.summary || '').trim() && !note.color) {
-      // 消した印を残す。本当に消すと、古いバックアップから復活する
-      await store.tombNote(noteTomb(note, note.updatedAt));
+    if (isTomb(out)) {
+      await store.tombNote(out);
       state.notes.delete(note.key);
     } else {
-      await store.putNote(note);
-      state.notes.set(note.key, note);
+      await store.putNote(out);
+      state.notes.set(note.key, out);
     }
     saveFailures.delete('note:' + note.key);      // 保存できたので、前の失敗は解く
   } catch (err) {
@@ -3710,6 +3745,19 @@ async function saveNote(note) {
    * 毎回すべての印を外して包み直していたが、まるごと無駄だった。
    */
   repaintNote(note.lawId, note.anchor);
+  /*
+   * 突き合わせが起きたなら、編集欄を作り直す。
+   *
+   * 作り直さないと、欄はこちらの古いオブジェクトを掴んだままなので、
+   * 打つたびに同じ突き合わせを繰り返す。作り直せば、相手の版まで取り込んだ
+   * 記録を掴み直すので、次からは普通の編集に戻る。
+   * 表に出るのはこちらの中身なので、打ったものが消えることはない。
+   */
+  if (merged && state.selected === note.anchor
+    && P().current && P().current.lawId === note.lawId) {
+    toast('別の端末でも直されていました。両方残しました');
+    renderNotePane();
+  }
   if (state.selected) {
     const el = $(`[data-anchor="${CSS.escape(state.selected)}"]`, P().el);
     if (el && selBoxOn()) el.classList.add('sel');   // 設定で切れる（上の注記）
