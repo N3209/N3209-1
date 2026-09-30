@@ -821,6 +821,36 @@ a.ref {
   outline-offset: 3px;
 }
 
+/*
+ * ▼ 切り分け用（仮）。選んだ印の枠を、箱の外ではなく内側に描く。
+ *
+ * outline は outline-offset の分だけ箱の外に出る。外に出るものは「描き直す
+ * 範囲」に算入されるので、長い本文の中では効いてくるらしい。
+ * box-shadow の inset なら、同じ枠が箱の中に描かれる。
+ *
+ * 枠そのものは残す。どこを選んでいるかが分かることは、速さより大事である。
+ * 内側に引くと文字に近くなるので、余白を足して同じだけ外へずらす。
+ * こうすると後ろの文字は動かない（padding だけ足すとずれる）。
+ */
+[data-diag~="selbg"] [data-anchor].sel > .para-num,
+[data-diag~="selbg"] [data-anchor].sel > .item-title,
+[data-diag~="selbg"] [data-anchor].sel > .article-title,
+[data-diag~="selbg"] [data-anchor].sel > .article-caption,
+[data-diag~="selbg"] [data-anchor].sel > .para > .article-title {
+  outline: none !important;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  background: var(--accent-bg);
+  padding: 1px 4px;
+  margin: 0 -4px;
+  border-radius: 4px;
+}
+[data-diag~="selbg"] .preamble.sel,
+[data-diag~="selbg"] .appdx.sel {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* ▲ ここまで */
+
 /* 番号を持たない塊（前文・別表）は輪郭で示すしかない */
 .preamble.sel, .appdx.sel { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 

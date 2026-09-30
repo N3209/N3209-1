@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v83';
+const APP_VERSION = 'v84';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -6541,6 +6541,7 @@ async function measureOpenSplit() {
     ['注釈欄なし', ['nopop']],
     ['選んだ枠なし', ['nosel']],
     ['両方なし', ['nopop', 'nosel']],
+    ['枠を塗りに', ['selbg']],
     ['なめらか変化なし', ['notrans']],
     ['位置指定なし', ['norel']],
   ];
