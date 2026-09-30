@@ -771,13 +771,6 @@ a.ref {
 
 [data-anchor] { position: relative; cursor: pointer; }
 
-/* ▼ 重さの切り分け用（仮）。原因が決まったら、この塊ごと外す */
-[data-diag~="norel"] [data-anchor] { position: static; }
-[data-diag~="nodot"] a.ref { border-bottom: none; }
-[data-diag~="notrans"] * { transition: none !important; }
-/* 包みは残したまま、薄い色だけ止める。DOMの効きと色の効きを分けるため */
-[data-diag~="nodim"] .paren { color: inherit !important; }
-/* ▲ ここまで */
 
 /*
  * 選択とホバーは「条文番号そのもの」に出す。本文全体を囲うと読む邪魔になる。
@@ -827,36 +820,7 @@ a.ref {
   outline-offset: 3px;
 }
 
-/*
- * ▼ 切り分け用（仮）。選んだ印の枠を、箱の外ではなく内側に描く。
- *
- * outline は outline-offset の分だけ箱の外に出る。外に出るもの（ink overflow）は
- * 描き直す範囲の計算に入るので、長い本文の中では効いてくるらしい。
- * box-shadow の inset なら、同じ枠が箱の中に描かれる。
- *
- * 枠そのものは残す。どこを選んでいるかが分かることは、速さより大事である。
- *
- * 余白は一切触らない。文字に近くなるので余白を足したくなるが、
- *   .para-num   { margin-right: .3em }
- *   .item-title { margin-right: .5em }
- *   .article-caption { display: inline-block }
- * があるので、margin を上書きすると後ろの文字がずれ、inline-block では
- * 上下 padding が行の高さまで動かす（Codex の指摘）。枠の描き方だけ替える。
- */
-[data-diag~="selbg"] [data-anchor].sel > .para-num,
-[data-diag~="selbg"] [data-anchor].sel > .item-title,
-[data-diag~="selbg"] [data-anchor].sel > .article-title,
-[data-diag~="selbg"] [data-anchor].sel > .article-caption,
-[data-diag~="selbg"] [data-anchor].sel > .para > .article-title {
-  outline: none !important;
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-}
-[data-diag~="selbg"] .preamble.sel,
-[data-diag~="selbg"] .appdx.sel {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-/* ▲ ここまで */
+
 
 /* 番号を持たない塊（前文・別表）は輪郭で示すしかない */
 [data-selbox="on"] .preamble.sel,

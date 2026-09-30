@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v86';
+const APP_VERSION = 'v87';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1464,8 +1464,6 @@ function renderLawList() {
 
 async function openLaw(lawId, anchor, scrollTop, pane) {
   pane = pane || P();
-  // 開くのにどれだけかかったかは、重さを測るときに要る（下の measurePerf）
-  const openedAt = performance.now();
   await flushSave();
   const rec = await store.getLaw(lawId);
   if (!rec) { toast('法令が見つかりません'); return; }
@@ -1576,7 +1574,6 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   if (find.q && find.where === 'law' && find.scopeLawId !== lawId) doFind();
   else renderFindList();
   try { localStorage.setItem('roppo.last', lawId); } catch (e) { /* 使えなくても支障ない */ }
-  pane._openMs = performance.now() - openedAt;
 }
 
 /* ------------------------------------------------- 条文参照の行き先を決める */
@@ -1862,7 +1859,6 @@ function wirePanes() {
      * 指に付いてこなくなっていた。1フレームに1回までにする。
      */
     p.el.addEventListener('scroll', () => {
-      if (diagOn('noscroll')) return;          // 切り分け用（仮）
       hideTip();
       if (p === P()) { clearTimeout(p._t); p._t = setTimeout(rememberPos, 300); }
       if (p._raf) return;
@@ -2386,16 +2382,12 @@ function scrollToAnchor(anchor, edit, pane) {
 async function selectAnchor(anchor, edit, pane) {
   pane = pane || P();
   if (pane !== P()) setActivePane(pane.idx);
-  perfAt('書きかけの確定へ');
   await flushSave();
-  perfAt('書きかけを確定した');
   $$('.sel').forEach(e => e.classList.remove('sel'));
-  perfAt('前の選択を外した');
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
-  if (el && selBoxOn() && !diagOn('nosel')) el.classList.add('sel');
-  perfAt('選んだ');
+  if (el && selBoxOn()) el.classList.add('sel');
   state.selected = anchor;
-  if (edit && !diagOn('nopop')) openPopover();           // 切り分け用（仮）
+  if (edit) openPopover();
   else closePopoverKeepSelection();
 }
 
@@ -2443,11 +2435,8 @@ function openPopover() {
   if (!P().current || !state.selected) { closePopover(); return; }
   $('#pop-anchor').textContent = anchorLabel(state.selected);
   pop.hidden = false;
-  perfAt('注釈欄を出した');
   renderNotePane();
-  perfAt('注釈欄の中身');
   positionPopover();
-  perfAt('注釈欄の位置');
 }
 
 /** 文言メモの編集。条項号の注釈とは別の内容を同じパネルに出す。 */
@@ -3612,14 +3601,10 @@ function renderNotePane() {
       b.className = 'tag-known-btn';
       b.textContent = t;
       b.onclick = async ev => {
-        perfBegin('タグを1つ付ける（候補から）', ev);
         note.tags.push(t);
         await saveNote(note);
         paintChips();
-        perfAt('チップ');
         paintKnown();
-        perfAt('候補');
-        perfDone();
       };
       known.appendChild(b);
     }
@@ -3627,14 +3612,10 @@ function renderNotePane() {
 
   const addTag = async (v, ev) => {
     if (!v || note.tags.includes(v)) return;
-    perfBegin('タグを1つ付ける', ev);
     note.tags.push(v);
     await saveNote(note);
     paintChips();
-    perfAt('チップ');
     paintKnown();
-    perfAt('候補');
-    perfDone();
   };
 
   const tagInput = $('#tag-input');
@@ -3696,12 +3677,10 @@ async function saveNote(note) {
    * DBの記録は墓石も返すので、そこから継ぐ。
    */
   let base = note.version;
-  perfAt('DBを読む');
   try {
     const old = await store.getNote(note.key);
     if (old) base = vvMerge(base, old.version);
   } catch (e) { /* 読めなくても保存は続ける。版が戻るだけで、消しはしない */ }
-  perfAt('読めた');
   note.version = vvBump(base, deviceId);
   try {
     if (!note.tags.length && !(note.memo || '').trim()
@@ -3719,13 +3698,8 @@ async function saveNote(note) {
     toast('保存できませんでした: ' + err.message);
     return false;
   }
-  perfAt('DBに書けた');
-  if (!diagOn('nolist')) {                     // 切り分け用（仮）
-    renderMarkList();
-    perfAt('印とメモの一覧');
-    renderFilterPicker();
-    perfAt('絞り込みの札');
-  }
+  renderMarkList();
+  renderFilterPicker();
   /*
    * 触った条項号だけを塗り直す。
    *
@@ -3734,7 +3708,6 @@ async function saveNote(note) {
    * 毎回すべての印を外して包み直していたが、まるごと無駄だった。
    */
   repaintNote(note.lawId, note.anchor);
-  perfAt('本文の塗り直し');
   if (state.selected) {
     const el = $(`[data-anchor="${CSS.escape(state.selected)}"]`, P().el);
     if (el && selBoxOn()) el.classList.add('sel');   // 設定で切れる（上の注記）
@@ -4159,7 +4132,6 @@ function hideTip() {
  * 文言メモは常に、条項号のメモは本文にぶら下げていないときだけ。
  */
 function handleHover(e) {
-  if (diagOn('nohover')) return;               // 切り分け用（仮）
   if (annotMode() === 'none') { hideTip(); return; }
 
   const mk = e.target.closest && e.target.closest('mark[data-range-id]');
@@ -6416,344 +6388,6 @@ function openExportDialog() {
   $('#dlg-export').showModal();
 }
 
-/* ---------------------------------------- 重さの切り分け用（仮） */
-
-/*
- * iPhone だけが重い理由を、実機で一つずつ外して確かめるためのつまみ。
- *
- * 当てずっぽうで直すと、効いたのか効いていないのか分からないまま
- * コードだけが増える。原因が決まったら、この塊は消す。
- * 覚えさせない（読み込み直すと外れる）のは、切り分けの状態のまま
- * 使い続けてしまわないようにするため。
- */
-const diag = new Set();
-const diagOn = k => diag.has(k);
-
-function wireDiag() {
-  const box = $('#diag-switches');
-  if (!box) return;
-  box.addEventListener('change', e => {
-    const b = e.target.closest('input[data-diag]');
-    if (!b) return;
-    if (b.checked) diag.add(b.dataset.diag); else diag.delete(b.dataset.diag);
-    document.documentElement.dataset.diag = [...diag].join(' ');
-  });
-}
-
-/* ------------------------------------------------ 一手ぶんの時刻を刻む */
-
-/*
- * 指で押してから画面が変わるまでの、どこで時間が消えているかを見る。
- *
- * 前は saveNote を呼んで scrollHeight を読むまでを測っていた。これは
- * 「配置の計算まで」であって、絵が出るのを待っていない。18msと出ても、
- * 体感5秒と食い違う。食い違いの正体を見るには、実際に押したところから
- * 刻むしかない（Codex の指摘）。
- *
- * 刻むこと自体は配列に足すだけにする。測るために遅くしては元も子もない。
- */
-let perfRun = [];
-let perfRunName = '';
-
-function perfBegin(name, ev) {
-  perfRun = [];
-  perfRunName = name;
-  if (ev && typeof ev.timeStamp === 'number') {
-    perfRun.push({ name: '指が触れた', at: ev.timeStamp });
-  }
-  perfAt('受け取った');
-}
-
-function perfAt(name) {
-  if (!perfRunName || perfRun.length > 40) return;
-  perfRun.push({ name, at: performance.now() });
-}
-
-/*
- * 手が離れたあと、描き直しが2回来るまで見届ける。
- * これも「画素が出た証明」ではない（次の描き直しが来た、というだけ）。
- * それでも、来ないこと自体が手掛かりになる。
- */
-function perfDone() {
-  if (!perfRunName) return;
-  perfAt('処理おわり');
-  requestAnimationFrame(() => {
-    perfAt('つぎの描き直し');
-    requestAnimationFrame(() => {
-      perfAt('そのつぎ');
-      perfRunName = '';
-    });
-  });
-}
-
-/** 刻んだ記録を、押してからの経過で並べる。 */
-function perfRunText() {
-  if (!perfRun.length) return '記録がありません。タグを1つ付けてから押してください。';
-  const t0 = perfRun[0].at;
-  const out = [];
-  let prev = t0;
-  for (const r of perfRun) {
-    out.push('  +' + (r.at - t0).toFixed(1).padStart(7) + 'ms'
-      + '（' + (r.at - prev).toFixed(1) + '）　' + r.name);
-    prev = r.at;
-  }
-  /*
-   * どのつまみを入れて測ったかを必ず添える。
-   * これが無いと、比べても何と何を比べたのか分からない（実際にそうなった）。
-   */
-  return '直前の一手（' + (perfRunName || '終わり') + '）'
-    + '　版 ' + APP_VERSION
-    + '　つまみ ' + (diag.size ? [...diag].join('+') : 'なし') + '\n'
-    + out.join('\n')
-    + '\n  合計 ' + (perfRun[perfRun.length - 1].at - t0).toFixed(1) + 'ms';
-}
-
-/* -------------------------------- 注釈欄の重さを測り分ける（仮） */
-
-/*
- * 注釈欄を開く一手が、どの条件で重いのかを自動で測り分ける。
- *
- * 人がつまみを入れて何度も押すのは、手間のうえに条件が揃わない。
- * どのつまみで測ったかも記録に残らず、比べられなかった（実際にそうなった）。
- * ここで条件を順に当てて、同じ条項号を同じ位置で何度も開き、間隔を採る。
- *
- * 採るのは「1回目の描き直しと2回目の描き直しの間隔」である。
- * これは画素が出た時刻ではない。ただし処理が4msで終わっているのに
- * ここが1秒以上空くという事実は、その先の工程に仕事が残っていることを示す。
- */
-const twoFrames = () => new Promise(r => {
-  requestAnimationFrame(a => requestAnimationFrame(b => r(b - a)));
-});
-
-async function measureOpenSplit() {
-  const out = $('#perf-out');
-  const pane = P();
-  out.hidden = false;
-  if (!pane.current) { out.textContent = '法令を開いてから押してください'; return; }
-
-  // 画面に映っている条項号を選ぶ。遠くのものを開くとスクロールが混ざる
-  const here = lastAtOrBefore(pane.articleOffsets, pane.el.scrollTop + 80);
-  const anchor = (here && here.anchor) || (pane.el.querySelector('[data-anchor]') || {})
-    .getAttribute && pane.el.querySelector('[data-anchor]').dataset.anchor;
-  if (!anchor) { out.textContent = '条項号が見つかりません'; return; }
-
-  const keep = [...diag];
-  const setDiag = keys => {
-    diag.clear();
-    for (const k of keys) diag.add(k);
-    document.documentElement.dataset.diag = [...diag].join(' ');
-    for (const b of $$('#diag-switches input[data-diag]')) b.checked = diag.has(b.dataset.diag);
-  };
-
-  const cases = [
-    ['そのまま', []],
-    ['注釈欄なし', ['nopop']],
-    ['選んだ枠なし', ['nosel']],
-    ['両方なし', ['nopop', 'nosel']],
-    ['枠を塗りに', ['selbg']],
-    ['なめらか変化なし', ['notrans']],
-    ['位置指定なし', ['norel']],
-  ];
-
-  const lines = ['注釈欄を開く一手（' + anchorLabel(anchor) + 'で ' + APP_VERSION + '）',
-    '本文の高さ ' + Math.round(pane.el.scrollHeight).toLocaleString() + 'px', ''];
-  out.textContent = lines.join('\n') + '\n測っています…';
-
-  for (const [name, keys] of cases) {
-    const got = [];
-    for (let i = 0; i < 3; i++) {
-      closePopover();
-      setDiag(keys);
-      $$('.sel').forEach(e => e.classList.remove('sel'));
-      await twoFrames();
-      await new Promise(r => setTimeout(r, 250));      // 前の仕事を落ち着かせる
-      await selectAnchor(anchor, true, pane);
-      got.push(await twoFrames());
-    }
-    got.sort((a, b) => a - b);
-    lines.push('  ' + name.padEnd(9)
-      + ' 真ん中 ' + got[1].toFixed(0).padStart(5) + 'ms'
-      + '　（' + got.map(x => x.toFixed(0)).join(' / ') + '）');
-    out.textContent = lines.join('\n');
-  }
-
-  closePopover();
-  setDiag(keep);
-  lines.push('');
-  lines.push('数が小さくなった条件が、重さのもとです。');
-  out.textContent = lines.join('\n');
-}
-
-/* ------------------------------------------------------ 動きの重さを測る */
-
-/*
- * 「iPhone で本文をスクロールすると重い」を、手元の推測で塞ごうとしても当たらない。
- * 実機で数を採る。
- *
- * 分けて見たいのは三つ。
- *   本文の大きさ    高さ・要素数・文字数。長い法令ほど1枚の紙が縦に伸びる。
- *   一手ぶんの処理  タグを1つ付けるたびに走る処理を、関数ごとに測る。
- *   描き直しの間隔  指で動かしている間の間隔。詰まっていなければ、遅いのは
- *                   本文を絵にする側であって、こちらの処理ではない。
- *
- * どこに手を入れるかが、この三つの並びで決まる。
- */
-async function measurePerf() {
-  const out = $('#perf-out');
-  const pane = P();
-  out.hidden = false;
-  if (!pane.current) { out.textContent = '法令を開いてから押してください'; return; }
-
-  const el = pane.el;
-  const n = sel => el.querySelectorAll(sel).length;
-  const lines = [];
-  lines.push('版 ' + APP_VERSION
-    + '　画面 ' + window.innerWidth + '×' + window.innerHeight
-    + '　倍率 ' + (window.devicePixelRatio || 1));
-  lines.push('法令: ' + (pane.current.lawTitle || pane.current.lawId));
-  lines.push('本文の高さ ' + Math.round(el.scrollHeight).toLocaleString() + 'px'
-    + '（画面 ' + Math.round(el.scrollHeight / (el.clientHeight || 1)) + '枚分）');
-  lines.push('要素 ' + n('*').toLocaleString()
-    + '　文字 ' + (el.textContent || '').length.toLocaleString());
-  if (pane._openMs) {
-    lines.push('この法令を開くのにかかった時間 ' + Math.round(pane._openMs) + 'ms');
-  }
-  lines.push('この法令の注釈 ' + [...state.notes.values()]
-    .filter(x => x.lawId === pane.current.lawId).length
-    + '　文言注釈 ' + [...state.ranges.values()]
-      .filter(x => x.lawId === pane.current.lawId).length);
-  lines.push('印 ' + n('mark') + '　メモ ' + n('.memo-inline')
-    + '　前メモ ' + n('.note-summary') + '　タグ ' + n('.inline-tags')
-    + '　参照リンク ' + n('a.ref'));
-
-  /*
-   * タグを1つ付けると走る処理を、順に測る。
-   * 5秒かかるという申し出が、どの行のことなのかをここで切り分ける。
-   */
-  /*
-   * 待ち時間は「処理が終わった時刻」ではなく「絵になった時刻」で測る。
-   * 関数から戻っただけでは、配置の計算も描き直しもまだ済んでいない。
-   * 強いて配置を読ませ（scrollHeight）、そこまでを1つの手間と数える。
-   */
-  const ms = (name, fn) => {
-    const t = performance.now();
-    try { fn(); void el.scrollHeight; }
-    catch (e) { return name + ' ✗' + (e && e.message ? '(' + e.message + ')' : ''); }
-    return name + ' ' + (performance.now() - t).toFixed(1) + 'ms';
-  };
-
-  /*
-   * タグを1つ付けて、外すところまでを実際にやる。
-   *
-   * 前は paintNotes / paintRanges を呼んで測っていたが、いまの保存は
-   * その道を通らない。測る先が実物とずれていては、切り分けにならない。
-   * 使うのは本文の一番上の条項号。中身は残さない。
-   */
-  const probe = el.querySelector('[data-anchor]');
-  lines.push('');
-  if (!probe) {
-    lines.push('タグの付け外しは測れませんでした（条項号が見つかりません）');
-  } else {
-    const anchor = probe.dataset.anchor;
-    const key = noteKey(pane.current.lawId, anchor);
-    const had = state.notes.get(key);
-    lines.push('タグを1つ付けるときに走る処理（' + anchorLabel(anchor) + 'で試す）');
-
-    const note = had
-      ? { ...had, tags: [...(had.tags || []), '＿測定用'] }
-      : { key, lawId: pane.current.lawId, anchor, tags: ['＿測定用'],
-        color: '', summary: '', memo: '' };
-
-    const tSave = performance.now();
-    await saveNote(note);
-    void el.scrollHeight;
-    lines.push('  保存から絵になるまで ' + (performance.now() - tSave).toFixed(1) + 'ms');
-
-    // 内訳。保存そのもの（DB待ち）と、画面の作り直しを分ける
-    const tDb = performance.now();
-    try { await store.getNote(key); } catch (e) { /* 測れなくても続ける */ }
-    lines.push('  DBを1件読む ' + (performance.now() - tDb).toFixed(1) + 'ms');
-    lines.push('  ' + ms('触った条項号の塗り直し', () => repaintNote(pane.current.lawId, anchor))
-      + '　' + ms('注釈欄', () => renderNotePane()));
-    lines.push('  ' + ms('印とメモの一覧', () => renderMarkList())
-      + '　' + ms('絞り込みの札', () => renderFilterPicker()));
-    lines.push('  ' + ms('見出しの位置を測り直す', () => measureHeadings(pane)));
-    lines.push('  ' + ms('法令ぜんぶの塗り直し（前のやり方）', () => { paintNotes(); paintRanges(); }));
-
-    /*
-     * 元に戻す。saveNote は通さない。
-     *
-     * 通すと版が進み、無かったところには消した印が残る。測るために
-     * 利用者のデータを増やしてはいけない。元の記録をそのまま書き戻し、
-     * 無かったものは本当に消す。
-     */
-    try {
-      if (had) { await store.putNote(had); state.notes.set(key, had); }
-      else { await store.delNote(key); state.notes.delete(key); }
-    } catch (e) { toast('測定の後始末に失敗しました: ' + e.message); }
-    repaintNote(pane.current.lawId, anchor);
-    renderMarkList();
-    renderFilterPicker();
-  }
-
-  /*
-   * 指が動き出してから測る。
-   *
-   * 押してすぐ3秒数えると、指が動く前に終わってしまう。前の測定は
-   * 「動いた量 0px」で、止まっているときの間隔を測っていた。
-   * 動き出すのを待ち、動いている間だけを採る。
-   */
-  out.textContent = lines.join('\n') + '\n\n本文を指で動かしてください（待っています）…';
-
-  const startTop = el.scrollTop;
-  const moving = await new Promise(done => {
-    const giveUp = setTimeout(() => { el.removeEventListener('scroll', on); done(false); }, 15000);
-    const on = () => {
-      if (Math.abs(el.scrollTop - startTop) < 24) return;   // 指が触れただけの揺れは待つ
-      clearTimeout(giveUp);
-      el.removeEventListener('scroll', on);
-      done(true);
-    };
-    el.addEventListener('scroll', on, { passive: true });
-  });
-
-  if (!moving) {
-    lines.push('');
-    lines.push('描き直しの間隔: 測れませんでした（本文が動きませんでした）');
-    out.textContent = lines.join('\n');
-    return;
-  }
-  out.textContent = lines.join('\n') + '\n\nそのまま動かし続けてください（3秒）…';
-
-  const from = el.scrollTop;
-  const t = [];
-  const start = performance.now();
-  await new Promise(done => {
-    const tick = now => {
-      t.push(now);
-      if (now - start < 3000) requestAnimationFrame(tick); else done();
-    };
-    requestAnimationFrame(tick);
-  });
-
-  const gaps = [];
-  for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
-  gaps.sort((a, b) => a - b);
-  const at = p => (gaps.length ? gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))] : 0);
-  const slow = gaps.filter(g => g > 32).length;
-  const moved = Math.round(Math.abs(el.scrollTop - from));
-
-  lines.push('');
-  lines.push('描き直しの間隔（' + gaps.length + '回）');
-  lines.push('  真ん中 ' + at(0.5).toFixed(1) + 'ms'
-    + '　重い方の1割 ' + at(0.9).toFixed(1) + 'ms'
-    + '　最悪 ' + (gaps.length ? gaps[gaps.length - 1].toFixed(1) : '0') + 'ms');
-  lines.push('  32msを超えた回 ' + slow
-    + '（' + Math.round((slow / (gaps.length || 1)) * 100) + '%）');
-  lines.push('  この間に動いた量 ' + moved.toLocaleString() + 'px');
-  out.textContent = lines.join('\n');
-}
-
 /* ---------------------------------------------------------- 法令の追加 */
 
 async function searchAndShow() {
@@ -7014,17 +6648,6 @@ function wire() {
 
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
-  wireDiag();
-  $('#btn-perf-split').onclick = () => measureOpenSplit();
-  $('#btn-perf-run').onclick = () => {
-    const out = $('#perf-out');
-    out.hidden = false;
-    out.textContent = perfRunText();
-  };
-  $('#btn-perf').onclick = () => {
-    P()._perfTop = P().el.scrollTop;      // どれだけ動かしたかを添えるため
-    measurePerf();
-  };
   $('#btn-rev-move').onclick = () => doRevisionNoteMove();
   $('#btn-join').onclick = () => doJoin();
   $('#btn-pick').onclick = () => {
@@ -7076,7 +6699,6 @@ function wire() {
 
 function bindPaneEvents(pane) {
   pane.el.addEventListener('click', e => {
-    perfBegin('本文を押す', e);                 // 切り分け用（仮）
     const ref = e.target.closest('a.ref[data-target]');
     if (ref) {
       e.preventDefault();
@@ -7095,12 +6717,10 @@ function bindPaneEvents(pane) {
       return;
     }
     hideSlashBar();
-    perfAt('印の判定');
 
     // 文字を選択している最中は編集を開かない（範囲注釈を付けたいだけのことが多い）
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
-    perfAt('選択の確認');
 
     /*
      * 番号を押したのなら、ここで決める。
@@ -7129,7 +6749,6 @@ function bindPaneEvents(pane) {
       if (num) {
         const host = num.closest('[data-anchor]');
         if (host && host.dataset.anchor) selectAnchor(host.dataset.anchor, true, pane);
-        perfDone();
         return;
       }
     }
@@ -7139,7 +6758,6 @@ function bindPaneEvents(pane) {
      * 本文のそれ以外の場所は、これまでどおり何も起きない。
      */
     const near = sentenceEndNear(e.clientX, e.clientY);
-    perfAt('句点さがし');
     if (near) {
       // すでに印が付いていれば、その印の編集として開く
       const cur = P().current && existingSlash(P().current.lawId, near.anchor, near.text, near.nth);

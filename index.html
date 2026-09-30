@@ -95,6 +95,11 @@
         <button type="button" data-selbox="on">出す</button>
         <button type="button" data-selbox="off">出さない</button>
       </div>
+      <p class="hint" style="margin:6px 0 0;line-height:1.6">
+        端末によっては、この枠の付け外しが重さの原因になります。
+        条文の多い法令で注釈欄が出るまで待たされるなら、切ってみてください。
+        選んでいる条文は注釈欄の見出しにも出ます。
+      </p>
 
       <p class="note-label">注釈の表示</p>
       <div class="font-picker" id="annot-picker" style="grid-template-columns:1fr 1fr 1fr">
@@ -324,38 +329,6 @@
              autocomplete="off" style="width:min(100%,300px)">
       <button type="button" id="sync-account-save" class="mini">覚える</button>
     </p>
-
-    <p class="note-label" style="margin-top:16px">動きを測る</p>
-    <p class="hint" style="margin:0 0 8px">
-      本文の動きが重いときに。重い法令を開いた状態で押し、そのあと3秒ほど、
-      いつもどおり本文を指で動かしてください。
-    </p>
-    <div class="row">
-      <button type="button" id="btn-perf" class="mini">動きの重さを測る</button>
-      <button type="button" id="btn-perf-run" class="mini">直前の一手の記録</button>
-      <button type="button" id="btn-perf-split" class="mini">注釈欄の重さを測り分ける</button>
-    </div>
-    <!-- ▼ ここから重さの切り分け用（仮）。原因が決まったら、この塊ごと外す -->
-    <p class="hint" style="margin:8px 0 2px">
-      切り分けのつまみ。入れたり外したりしてスクロールを比べてください。
-      読み込み直すと全部外れます。
-    </p>
-    <div id="diag-switches" style="display:grid;gap:3px;font-size:12px;margin-bottom:8px">
-      <label><input type="checkbox" data-diag="noscroll"> 本文追従（現在位置の帯）を止める</label>
-      <label><input type="checkbox" data-diag="norel"> 条項号の位置指定を外す</label>
-      <label><input type="checkbox" data-diag="nodot"> 参照リンクの点線を消す</label>
-      <label><input type="checkbox" data-diag="notrans"> なめらかな変化を止める</label>
-      <label><input type="checkbox" data-diag="nodim"> 括弧の薄い色だけ止める（包みは残す）</label>
-      <label><input type="checkbox" data-diag="nopop"> 注釈欄を出さない（選ぶだけ）</label>
-      <label><input type="checkbox" data-diag="nosel"> 選んだ枠を出さない</label>
-      <label><input type="checkbox" data-diag="selbg"> 選んだ枠を内側に描く（見た目はほぼ同じ）</label>
-      <label><input type="checkbox" data-diag="nohover"> 本文のカーソル監視を外す</label>
-      <label><input type="checkbox" data-diag="nolist"> 保存のたびの一覧の作り直しを止める</label>
-    </div>
-    <!-- ▲ ここまで -->
-    <pre id="perf-out" class="hint" hidden
-         style="white-space:pre-wrap;word-break:break-all;margin:8px 0 0;
-                background:rgba(0,0,0,.05);padding:8px;border-radius:6px"></pre>
 
     <p class="note-label" style="margin-top:16px">バックアップ</p>
     <p class="hint" style="margin:0 0 8px">
