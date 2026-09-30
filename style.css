@@ -812,11 +812,17 @@ a.ref {
   }
 }
 
-[data-anchor].sel > .para-num,
-[data-anchor].sel > .item-title,
-[data-anchor].sel > .article-title,
-[data-anchor].sel > .article-caption,
-[data-anchor].sel > .para > .article-title {
+/*
+ * 選んでいる条項号を囲む。表示設定で切れる（既定は出す）。
+ *
+ * 本文の大きい法令では、この枠を付け外しするだけで端末が数秒詰まることが
+ * ある。切った場合も、選んでいる条項号は注釈欄の見出しに出る。
+ */
+[data-selbox="on"] [data-anchor].sel > .para-num,
+[data-selbox="on"] [data-anchor].sel > .item-title,
+[data-selbox="on"] [data-anchor].sel > .article-title,
+[data-selbox="on"] [data-anchor].sel > .article-caption,
+[data-selbox="on"] [data-anchor].sel > .para > .article-title {
   outline: 1.5px solid var(--accent) !important;
   outline-offset: 3px;
 }
@@ -853,7 +859,10 @@ a.ref {
 /* ▲ ここまで */
 
 /* 番号を持たない塊（前文・別表）は輪郭で示すしかない */
-.preamble.sel, .appdx.sel { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+[data-selbox="on"] .preamble.sel,
+[data-selbox="on"] .appdx.sel {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px;
+}
 
 /* マークは条文番号の左に小さな●を置くだけ。本文の見え方は変えない。 */
 .mk::before {

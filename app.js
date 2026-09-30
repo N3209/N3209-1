@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v85';
+const APP_VERSION = 'v86';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -2392,7 +2392,7 @@ async function selectAnchor(anchor, edit, pane) {
   $$('.sel').forEach(e => e.classList.remove('sel'));
   perfAt('前の選択を外した');
   const el = $(`[data-anchor="${CSS.escape(anchor)}"]`, pane.el);
-  if (el && !diagOn('nosel')) el.classList.add('sel');   // 切り分け用（仮）
+  if (el && selBoxOn() && !diagOn('nosel')) el.classList.add('sel');
   perfAt('選んだ');
   state.selected = anchor;
   if (edit && !diagOn('nopop')) openPopover();           // 切り分け用（仮）
@@ -2400,6 +2400,15 @@ async function selectAnchor(anchor, edit, pane) {
 }
 
 /* ------------------------------------------------- 注釈のポップアップ */
+
+/*
+ * 選んだ条項号を本文で囲むか（表示設定。端末ごと）。
+ *
+ * 大事なのは「規則を抑える」のではなく「印を付けない」ことである。
+ * 実機で速いと確かめたのは、付けない動作の方だった。規則だけ抑えても、
+ * 印を付け替えた時点でブラウザは作り直しの必要を記録する（Codex の指摘）。
+ */
+const selBoxOn = () => (document.documentElement.dataset.selbox || 'on') !== 'off';
 
 /** 枠を出している番号の要素。ポップアップはこれに寄せて開く。 */
 function numberElOf(el) {
@@ -3728,7 +3737,7 @@ async function saveNote(note) {
   perfAt('本文の塗り直し');
   if (state.selected) {
     const el = $(`[data-anchor="${CSS.escape(state.selected)}"]`, P().el);
-    if (el) el.classList.add('sel');
+    if (el && selBoxOn()) el.classList.add('sel');   // 設定で切れる（上の注記）
   }
   const at = $('#saved-at');
   if (at && state.selected === note.anchor && P().current && P().current.lawId === note.lawId) {
@@ -6800,6 +6809,17 @@ const FONT_STACKS = {
 const VIEW_DEFAULT = {
   font: 'mincho', size: 16, leading: 19, measure: 46,
   annot: 'all', ink: '#1558b8', paren: 'dim',
+  /*
+   * 選んだ条項号を本文で囲むか。
+   *
+   * 出すのが既定である。どこを選んでいるかは分かった方がよい。
+   * ただし本文の大きい法令では、この枠を付け外しするだけで端末が
+   * 数秒詰まることがある（iPhone で会社法。枠の描き方を替えても変わらず、
+   * 付けなければ速い、というところまで確かめた）。
+   * 選んでいる条項号は注釈欄の見出しにも出るので、切れる方が親切である。
+   * 表示設定は端末ごとに保存するので、重い端末だけ切れる。
+   */
+  selbox: 'on',
 };
 
 function loadView() {
@@ -6818,12 +6838,18 @@ function applyView(v) {
   root.dataset.annot = v.annot || 'all';
   root.style.setProperty('--ink', v.ink || VIEW_DEFAULT.ink);
   root.dataset.paren = v.paren || 'dim';
+  root.dataset.selbox = v.selbox || 'on';
+  // 出さない設定に変えたなら、いま出ている枠も外す
+  if (!selBoxOn()) $$('.sel').forEach(e => e.classList.remove('sel'));
 
   for (const b of $$('#font-picker button')) b.classList.toggle('on', b.dataset.font === v.font);
   for (const b of $$('#measure-picker button')) b.classList.toggle('on', Number(b.dataset.measure) === v.measure);
   for (const b of $$('#annot-picker button')) b.classList.toggle('on', b.dataset.annot === (v.annot || 'all'));
   for (const b of $$('#ink-picker button')) b.classList.toggle('on', b.dataset.ink === (v.ink || VIEW_DEFAULT.ink));
   for (const b of $$('#paren-picker button')) b.classList.toggle('on', b.dataset.paren === (v.paren || 'dim'));
+  for (const b of $$('#selbox-picker button')) {
+    b.classList.toggle('on', b.dataset.selbox === (v.selbox || 'on'));
+  }
   $('#size-range').value = v.size;
   $('#leading-range').value = v.leading;
   $('#size-val').textContent = v.size + 'px';
@@ -6856,6 +6882,16 @@ function wireView() {
     const b = e.target.closest('button[data-font]');
     if (!b) return;
     view.font = b.dataset.font;
+    applyView(view);
+  });
+  /*
+   * 枠を出さない設定にしたら、いま出ている枠も消す。
+   * 設定を変えたのに画面が変わらないと、効いていないように見える。
+   */
+  $('#selbox-picker').addEventListener('click', e => {
+    const b = e.target.closest('button[data-selbox]');
+    if (!b) return;
+    view.selbox = b.dataset.selbox;
     applyView(view);
   });
   $('#paren-picker').addEventListener('click', e => {
