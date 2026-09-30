@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v82';
+const APP_VERSION = 'v83';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -6488,8 +6488,90 @@ function perfRunText() {
       + '（' + (r.at - prev).toFixed(1) + '）　' + r.name);
     prev = r.at;
   }
-  return '直前の一手（' + (perfRunName || '終わり') + '）\n' + out.join('\n')
+  /*
+   * どのつまみを入れて測ったかを必ず添える。
+   * これが無いと、比べても何と何を比べたのか分からない（実際にそうなった）。
+   */
+  return '直前の一手（' + (perfRunName || '終わり') + '）'
+    + '　版 ' + APP_VERSION
+    + '　つまみ ' + (diag.size ? [...diag].join('+') : 'なし') + '\n'
+    + out.join('\n')
     + '\n  合計 ' + (perfRun[perfRun.length - 1].at - t0).toFixed(1) + 'ms';
+}
+
+/* -------------------------------- 注釈欄の重さを測り分ける（仮） */
+
+/*
+ * 注釈欄を開く一手が、どの条件で重いのかを自動で測り分ける。
+ *
+ * 人がつまみを入れて何度も押すのは、手間のうえに条件が揃わない。
+ * どのつまみで測ったかも記録に残らず、比べられなかった（実際にそうなった）。
+ * ここで条件を順に当てて、同じ条項号を同じ位置で何度も開き、間隔を採る。
+ *
+ * 採るのは「1回目の描き直しと2回目の描き直しの間隔」である。
+ * これは画素が出た時刻ではない。ただし処理が4msで終わっているのに
+ * ここが1秒以上空くという事実は、その先の工程に仕事が残っていることを示す。
+ */
+const twoFrames = () => new Promise(r => {
+  requestAnimationFrame(a => requestAnimationFrame(b => r(b - a)));
+});
+
+async function measureOpenSplit() {
+  const out = $('#perf-out');
+  const pane = P();
+  out.hidden = false;
+  if (!pane.current) { out.textContent = '法令を開いてから押してください'; return; }
+
+  // 画面に映っている条項号を選ぶ。遠くのものを開くとスクロールが混ざる
+  const here = lastAtOrBefore(pane.articleOffsets, pane.el.scrollTop + 80);
+  const anchor = (here && here.anchor) || (pane.el.querySelector('[data-anchor]') || {})
+    .getAttribute && pane.el.querySelector('[data-anchor]').dataset.anchor;
+  if (!anchor) { out.textContent = '条項号が見つかりません'; return; }
+
+  const keep = [...diag];
+  const setDiag = keys => {
+    diag.clear();
+    for (const k of keys) diag.add(k);
+    document.documentElement.dataset.diag = [...diag].join(' ');
+    for (const b of $$('#diag-switches input[data-diag]')) b.checked = diag.has(b.dataset.diag);
+  };
+
+  const cases = [
+    ['そのまま', []],
+    ['注釈欄なし', ['nopop']],
+    ['選んだ枠なし', ['nosel']],
+    ['両方なし', ['nopop', 'nosel']],
+    ['なめらか変化なし', ['notrans']],
+    ['位置指定なし', ['norel']],
+  ];
+
+  const lines = ['注釈欄を開く一手（' + anchorLabel(anchor) + 'で ' + APP_VERSION + '）',
+    '本文の高さ ' + Math.round(pane.el.scrollHeight).toLocaleString() + 'px', ''];
+  out.textContent = lines.join('\n') + '\n測っています…';
+
+  for (const [name, keys] of cases) {
+    const got = [];
+    for (let i = 0; i < 3; i++) {
+      closePopover();
+      setDiag(keys);
+      $$('.sel').forEach(e => e.classList.remove('sel'));
+      await twoFrames();
+      await new Promise(r => setTimeout(r, 250));      // 前の仕事を落ち着かせる
+      await selectAnchor(anchor, true, pane);
+      got.push(await twoFrames());
+    }
+    got.sort((a, b) => a - b);
+    lines.push('  ' + name.padEnd(9)
+      + ' 真ん中 ' + got[1].toFixed(0).padStart(5) + 'ms'
+      + '　（' + got.map(x => x.toFixed(0)).join(' / ') + '）');
+    out.textContent = lines.join('\n');
+  }
+
+  closePopover();
+  setDiag(keep);
+  lines.push('');
+  lines.push('数が小さくなった条件が、重さのもとです。');
+  out.textContent = lines.join('\n');
 }
 
 /* ------------------------------------------------------ 動きの重さを測る */
@@ -6896,6 +6978,7 @@ function wire() {
   $('#btn-sync').onclick = () => doSync();
   $('#btn-peek').onclick = () => peekRemote();
   wireDiag();
+  $('#btn-perf-split').onclick = () => measureOpenSplit();
   $('#btn-perf-run').onclick = () => {
     const out = $('#perf-out');
     out.hidden = false;
