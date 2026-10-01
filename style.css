@@ -1240,3 +1240,29 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   /* この幅で2面に割っても、どちらも読めない */
   #btn-split { display: none; }
 }
+
+/*
+ * 指で触る端末では、文字を打つ欄を16px以上にする。
+ *
+ * iOS Safari は、16px未満の入力欄に触れると画面を拡大する。拡大は戻らない
+ * ので、本文の幅まで変わって読みにくくなる。法令追加の欄で気づいたが、
+ * 検索・絞り込み・メモの欄も同じだった（番号テンキーの欄だけ17pxで、
+ * 先に手当てされていた）。
+ *
+ * user-scalable=no で拡大そのものを止めるやり方は採らない。本文を大きく
+ * して読みたいことはあるので、二本指での拡大は残す。
+ *
+ * 高さは変えない。32pxの枠に16pxの文字は収まる。
+ */
+@media (hover: none) and (pointer: coarse) {
+  .find input,
+  .topbar input,
+  .filter,
+  .dlg-form .row input,
+  .sheet-pane .find input,
+  #summary-input,
+  #tag-input,
+  #memo-input {
+    font-size: 16px;
+  }
+}
