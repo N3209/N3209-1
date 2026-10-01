@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v92';
+const APP_VERSION = 'v93';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -325,9 +325,44 @@ const store = {
 
 /* -------------------------------------------------------------- e-Gov API */
 
+/*
+ * e-Gov を叩く。繋がらなかったときに、何が起きているかを言う。
+ *
+ * メンテナンス中の e-Gov は 403 とHTMLを返すが、その応答には
+ * Access-Control-Allow-Origin が付いていない。するとブラウザは状態を
+ * 読む前に CORS の検査で弾くので、こちらには status すら届かない。
+ * Safari はそれを「Load failed」とだけ言う。生のまま出していたので、
+ * 自分のアプリが壊れたようにしか見えなかった（実際そう受け取られた）。
+ *
+ * 向こうのメンテナンスか、こちらの回線かは、ブラウザからは区別できない。
+ * 決められないので両方を挙げる。navigator.onLine は「繋がっていない」
+ * ことだけは当てになるので、はっきりしているときはそう言う。
+ * あわせて「取り込んだ法令はそのまま読める」ことを必ず添える。
+ * 読めると分かっていれば、慌てずに済む。
+ */
+async function apiGet(url, what) {
+  let r;
+  try {
+    r = await fetch(url);
+  } catch (e) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('この端末が通信できていません。'
+        + '（取り込んだ法令はそのまま読めます）');
+    }
+    throw new Error('e-Gov に繋がりません。向こうがメンテナンス中か、'
+      + '通信が届いていません。（取り込んだ法令はそのまま読めます）');
+  }
+  if (r.status === 403 || r.status === 503) {
+    throw new Error('e-Gov が応じません（' + r.status + '）。'
+      + 'メンテナンス中かもしれません。（取り込んだ法令はそのまま読めます）');
+  }
+  if (!r.ok) throw new Error(what + 'に失敗しました (' + r.status + ')');
+  return r;
+}
+
 async function apiSearchLaws(title) {
-  const r = await fetch(`${API}/laws?law_title=${encodeURIComponent(title)}&limit=50`);
-  if (!r.ok) throw new Error('検索に失敗しました (' + r.status + ')');
+  const r = await apiGet(`${API}/laws?law_title=${encodeURIComponent(title)}&limit=50`,
+    '検索');
   const d = await r.json();
   return (d.laws || d.items || []).map(it => ({
     lawId: (it.law_info || {}).law_id,
@@ -348,15 +383,15 @@ async function apiSearchLaws(title) {
  * 例：民法は 2029-06-23 施行予定の改正が、いまの時点で返ってくる。
  */
 async function apiRevisions(lawId) {
-  const r = await fetch(`${API}/law_revisions/${encodeURIComponent(lawId)}`);
-  if (!r.ok) throw new Error('版の一覧を取得できません (' + r.status + ')');
+  const r = await apiGet(`${API}/law_revisions/${encodeURIComponent(lawId)}`,
+    '版の一覧の取得');
   const d = await r.json();
   return d.revisions || [];
 }
 
 async function apiFetchLaw(lawId) {
-  const r = await fetch(`${API}/law_data/${encodeURIComponent(lawId)}?response_format=xml`);
-  if (!r.ok) throw new Error('取得に失敗しました (' + r.status + ')');
+  const r = await apiGet(
+    `${API}/law_data/${encodeURIComponent(lawId)}?response_format=xml`, '取得');
   return await r.text();
 }
 
