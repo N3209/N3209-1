@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v89';
+const APP_VERSION = 'v90';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -317,6 +317,7 @@ const store = {
   delNote: key => { localWrites++; return write('notes', s => s.delete(key)); },
   tombNote: rec => { localWrites++; return write('notes', s => s.put(rec)); },
   allRanges: () => read('ranges', s => s.getAll()),
+  getRange: id => read('ranges', s => s.get(id)),   // 墓石も返る。版を継ぐのに要る
   putRange: rec => { localWrites++; return write('ranges', s => s.put(rec)); },
   delRange: id => { localWrites++; return write('ranges', s => s.delete(id)); },
   tombRange: rec => { localWrites++; return write('ranges', s => s.put(rec)); },
@@ -4095,21 +4096,60 @@ function rangeFromSelection() {
 }
 
 /** 保存できたかを返す。理由は saveNote の注記を見よ。 */
+/*
+ * 文言メモを保存する。条項号の注釈（saveNote）と同じ約束で動かす。
+ *
+ * 前はDBの現状を見ずに、編集欄が掴んでいるレコードをそのまま書いていた。
+ * 欄を開いたあとに同期で別の編集が入ると、色を1つ変えるだけで相手の
+ * メモ本文が古い内容に戻り、衝突の候補も残らなかった。
+ * saveNote には入れた仕組みが、こちらには無かった（レビューの指摘 R05）。
+ */
 async function saveRange(rec) {
   rec.updatedAt = Date.now();
-  rec.version = vvBump(rec.version, deviceId);       // 理由は saveNote の注記を見よ
+
+  let old = null;
+  try { old = await store.getRange(rec.id); }
+  catch (e) { /* 読めなくても保存は続ける */ }
+
+  /*
+   * 版の継ぎ方は saveNote と同じ。墓石なら継ぎ（中身が無いので失うものがない）、
+   * 生きている記録は継がない（継ぐと相手の編集を承知したことになる）。
+   */
+  const base = (old && isTomb(old)) ? vvMerge(rec.version, old.version) : rec.version;
+  rec.version = vvBump(base, deviceId);
+
+  let out = rec;
+  let merged = false;
+  if (old && !isTomb(old) && !vvDominates(rec.version, old.version)) {
+    // 表に出すのは、いま触った方。相手は候補に回す（理由は saveNote の注記）
+    const { alts: _mine, ...mineClean } = out;
+    const { alts: _old, ...oldClean } = old;
+    const alts = pruneAlts([oldClean, ...collectAlts(old, out)], mineClean);
+    out = alts.length ? { ...mineClean, alts } : mineClean;
+    merged = true;
+  }
+
   try {
-    await store.putRange(rec);
+    await store.putRange(out);
   } catch (err) {
     saveFailures.add('range:' + rec.id);
     toast('文言メモを保存できませんでした: ' + err.message);
     return false;
   }
   saveFailures.delete('range:' + rec.id);         // 保存できたので、前の失敗は解く
-  state.ranges.set(rec.id, rec);
+  state.ranges.set(rec.id, out);
   repaintRangesAt(rec.lawId, rec.anchor);         // 触った条項号だけ（repaintNote と同じ理由）
   renderMarkList();
   renderFilterPicker();
+  /*
+   * 突き合わせたなら編集欄を作り直す。作り直さないと、欄が古いレコードを
+   * 掴んだまま、触るたびに同じ突き合わせを繰り返す（saveNote と同じ）。
+   */
+  if (merged && !$('#popover').hidden
+    && $('#notes-body').querySelector('#range-del')) {
+    toast('別の端末でも直されていました。両方残しました');
+    openRangePopover(rec.id);
+  }
   return true;
 }
 
