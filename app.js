@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v91';
+const APP_VERSION = 'v92';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -486,6 +486,38 @@ function linkifyText(raw, ctx) {
   marks.sort((a, b) => a.start - b.start);
 
   /*
+   * 列挙では2件目以降の条番号も省略される。
+   *
+   *   「第四百四十六条第二項及び第三項」→ 後ろも446条の第三項
+   *
+   * 引き継がないと、裸の「第三項」を描画中の条の第3項と読む。民法465条の2
+   * 第3項では、自分自身へ飛ぶリンクになっていた。それらしく見えるだけに
+   * 悪い（レビューの指摘 R15）。
+   *
+   * 引き継ぐのは、あいだに区切りらしい文字しか無いあいだだけにする。
+   * 同じ一文の後ろにある「第一項に規定する極度額」の「第一項」は、
+   * あいだに「の規定は、個人根保証契約における」が挟まるので引き継がない。
+   * あれは本当に自条の第1項を指している。確かめられないものは触らない。
+   *
+   * 法令名の引き継ぎより先に置く。ここで条を引き継いだ印が、続く印への
+   * 法令名の引き継ぎ元にもなるため。
+   */
+  const JOIN_RE = /^[、，及びならびに又はもしくは若しくは並びに・からまで乃至\s]*$/;
+  for (let i = 1; i < marks.length; i++) {
+    const cur = marks[i], prev = marks[i - 1];
+    if (cur.rel !== '項' || !cur.par) continue;        // 裸の「第N項」だけが対象
+    if (!prev.ref || prev.rel) continue;               // 直前が条の参照でなければ触らない
+    if (!JOIN_RE.test(raw.slice(prev.end, cur.start))) continue;
+    const [scope, art] = String(prev.ref).split('/');
+    if (!art) continue;
+    cur.ref = [scope, art, cur.par, cur.item || ''].join('/');
+    if (prev.law) cur.law = prev.law;
+    delete cur.rel;
+    delete cur.par;
+    delete cur.item;
+  }
+
+  /*
    * 列挙では2件目以降の法令名が省略される。
    *   「刑法第百三条、第百四条若しくは第百五条の二」→ 後ろ2つも刑法
    * これを引き継がないと、自法令に同じ番号があった場合に黙って別の法律へ飛ばす。
@@ -495,7 +527,7 @@ function linkifyText(raw, ctx) {
     const cur = marks[i], prev = marks[i - 1];
     if (cur.rel || cur.law || !prev.law) continue;
     const between = raw.slice(prev.end, cur.start);
-    if (!/^[、，及びならびに又はもしくは若しくは並びに・からまで乃至\s]*$/.test(between)) continue;
+    if (!JOIN_RE.test(between)) continue;
     cur.law = prev.law;
     cur.inherited = true;
   }
