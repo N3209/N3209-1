@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v90';
+const APP_VERSION = 'v91';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -1467,7 +1467,15 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   pane = pane || P();
   await flushSave();
   const rec = await store.getLaw(lawId);
-  if (!rec) { toast('法令が見つかりません'); return; }
+  /*
+   * 開けなかったことを、呼び側が確かめられるようにする。
+   *
+   * 前は知らせるだけで何も返さなかったので、呼び側は「開けたつもり」で
+   * 先へ進んでいた。同期で届いた未取込み法令の注釈を一覧から開くと、
+   * いま表示している別法令の同じ住所の編集欄が出て、打つとそちらへ
+   * 保存された（レビューの指摘 R20）。
+   */
+  if (!rec) { toast('法令が見つかりません'); return null; }
 
   const doc = parseXML(rec.xml);
   const lawEl = doc.querySelector('Law');
@@ -1576,6 +1584,7 @@ async function openLaw(lawId, anchor, scrollTop, pane) {
   if (find.q && find.where === 'law' && find.scopeLawId !== lawId) doFind();
   else renderFindList();
   try { localStorage.setItem('roppo.last', lawId); } catch (e) { /* 使えなくても支障ない */ }
+  return lawId;
 }
 
 /* ------------------------------------------------- 条文参照の行き先を決める */
@@ -1770,7 +1779,7 @@ async function followRef(a, toOtherPane) {
     const other = state.panes[P().idx === 0 ? 1 : 0];
     setActivePane(other.idx);
   }
-  await navigate(lawId, anchor);
+  if (!(await navigate(lawId, anchor))) return;
 }
 
 /* ----------------------------------------------------------- 2面の操作 */
@@ -2193,12 +2202,20 @@ function closeDrawerAfterJump() {
 }
 
 /** 移動の入口。法令内でも法令をまたいでも、ここを通れば履歴に残る。 */
+/**
+ * 法令へ移る。**着いた法令IDを返す。開けなければ null。**
+ *
+ * 返り値を見ずに編集を開くと、開けなかったときに別の法令を触ることになる
+ * （理由は openLaw の注記）。移った先で何かするなら、必ず確かめる。
+ */
 async function navigate(lawId, anchor) {
   rememberPos();
   closeDrawerAfterJump();
-  if (!P().current || P().current.lawId !== lawId) await openLaw(lawId, anchor);
-  else if (anchor) scrollToAnchor(anchor, false);
+  if (!P().current || P().current.lawId !== lawId) {
+    if (!(await openLaw(lawId, anchor))) return null;
+  } else if (anchor) scrollToAnchor(anchor, false);
   if (!navigating) pushHist({ lawId, anchor: anchor || null, scrollTop: P().el.scrollTop });
+  return lawId;
 }
 
 async function goHistory(delta) {
@@ -4830,7 +4847,10 @@ async function gotoFindResult(i) {
   const r = find.results[i];
   if (!r) return;
   find.at = i;
-  await navigate(r.lawId, r.anchor);
+  if (!(await navigate(r.lawId, r.anchor))) {
+    toast('この法令はこの端末にありません。「＋ 追加」から取り込んでください');
+    return;
+  }
   paintFindHits();
   const el = $(`[data-anchor="${CSS.escape(r.anchor)}"] mark.hit`, P().el);
   if (el) el.classList.add('cur');
@@ -4993,7 +5013,17 @@ function renderMarkResults() {
        */
       d.onclick = async () => {
         $('#dlg-find').close();
-        await navigate(m.lawId, m.anchor);
+        /*
+         * 着けなかったら、そこで止める。
+         *
+         * 同期で届いた「この端末に無い法令」の注釈も一覧に出る。前はここで
+         * 構わず編集を開いていたので、いま表示している別法令の同じ住所の
+         * 編集欄が出て、打つとそちらへ保存された（レビューの指摘 R20）。
+         */
+        if (!(await navigate(m.lawId, m.anchor))) {
+          toast('この法令はこの端末にありません。「＋ 追加」から取り込んでください');
+          return;
+        }
         if (m.kind === 'note') { await selectAnchor(m.anchor, true); return; }
         // 文言に付けたものは、その印のパネルを開く（条項号の注釈欄とは別）
         const rec = state.ranges.get(m.id);
