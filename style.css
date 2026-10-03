@@ -26,6 +26,19 @@
   --text-leading: 1.95;
   --measure: 46em;          /* 本文の最大行幅 */
   --ink: #1558b8;           /* 自分で書いた文字の色（条文本文の黒と区別する） */
+
+  /*
+   * 狭い画面の下段のバーの高さ。
+   *
+   * 7px + ボタン38px + 7px + セーフエリア。.bottombar の padding と
+   * .bottombar .lookup の height を変えたら、ここも合わせること。
+   *
+   * バーは画面の全幅を覆い、左ペインのドロワー（z-index 30）より上
+   * （z-index 33）にある。ドロワーが画面の下端まで伸びていると、
+   * 一覧の最後の数行がバーの下敷きになって見えない。しかも溢れる量が
+   * その分しかないので、指で動かしてもほとんど動かず、固まって見える。
+   */
+  --bottombar-h: calc(52px + env(safe-area-inset-bottom));
 }
 
 * { box-sizing: border-box; }
@@ -1255,7 +1268,9 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
 @media (max-width: 800px) {
   .pane-left { display: none; }
   .pane-left.open {
-    display: flex; position: fixed; left: 0; top: 0; bottom: 0;
+    display: flex; position: fixed; left: 0; top: 0;
+    /* 下段のバーの下敷きにしない（理由は :root の --bottombar-h の注記） */
+    bottom: var(--bottombar-h);
     width: min(300px, 82vw); z-index: 30; box-shadow: var(--shadow);
   }
   #btn-menu { display: block; }
