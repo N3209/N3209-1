@@ -577,16 +577,18 @@ body.resizing { cursor: col-resize; user-select: none; }
    開く・削除とぶつからない。 */
 /*
  * iOS は長押しで選択ルーペとメニューを出す。これが並べ替えの指の動きを
- * 横取りしてしまうので、一覧の中では止める。本文の選択には影響しない。
+ * 横取りするので止める。
+ *
+ * ただし掛けるのは取っ手だけにする。一覧全体に掛けていたが、並べ替えが
+ * 始まるのは取っ手からだけなので、ほかの行に掛ける意味がない。
+ * 一覧が指で動かないという申し出があり、指の操作に関わる指定を
+ * 取っ手の外から外していったうちの一つ。
  */
-.law-list {
-  -webkit-user-select: none; user-select: none;
-  -webkit-touch-callout: none;
-}
 .law-list .grip {
   flex: none; width: 18px; text-align: center; cursor: grab;
   color: var(--fg-faint); font-size: 12px; line-height: 1;
   touch-action: none;                 /* つまんでいる間、画面を動かさない */
+  -webkit-user-select: none; user-select: none;
   -webkit-touch-callout: none;
   opacity: 0;
 }
@@ -609,10 +611,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* 指では取っ手を常に出し、当たりを広く取る。
    16pxの的は指には小さく、外れても何も起きないので「反応しない」と感じる。 */
 @media (hover: none) {
-  .law-list .grip {
-    opacity: .55; width: 34px;
-    padding: 10px 0; margin: -10px 0;   /* 見た目は変えず、当たりだけ広げる */
-  }
+  /*
+   * 当たりは横に広げるだけにする。
+   *
+   * 以前は padding: 10px 0 / margin: -10px 0 で上下にも広げていたが、
+   * 取っ手には touch-action: none が掛かっているので、はみ出した分だけ
+   * 隣の行も指で動かせなくなる。行の高さを上げれば縦の当たりは足りる。
+   */
+  .law-list .grip { opacity: .55; width: 34px; }
   .law-list li { padding: 10px 8px; }
 }
 
