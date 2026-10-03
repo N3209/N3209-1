@@ -358,6 +358,16 @@
       e-Gov が持っている版の一覧です。まだ施行されていない改正も含みます。
       選ぶと別の法令として取り込むので、いま読んでいる版はそのまま残ります。
     </p>
+    <!--
+      並ぶ名前は「この法令を改正した法律」である。破産法なら
+      「民事訴訟法等の一部を改正する法律」のように別の法律の名前が並ぶ。
+      説明が無いと、別の法令の情報が出ているようにしか見えない。
+    -->
+    <div class="rev-head">
+      <span class="rv-date">施行日</span>
+      <span class="rv-title">改正した法律</span>
+      <span class="rv-state">状態</span>
+    </div>
     <div id="rev-list" class="rev-list"></div>
     <menu class="dlg-actions"><button value="close">閉じる</button></menu>
   </form>

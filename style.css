@@ -191,6 +191,22 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 }
 
 /* 版の一覧 */
+/*
+ * 並ぶ名前は「この法令を改正した法律」の名前である。説明が無いと、別の法令の
+ * 情報が出ているように見える（実際そう受け取られた）。見出しの行を付ける。
+ * 下の button と同じ並び・同じ幅づかいにして、列が揃うようにする。
+ */
+.rev-head {
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 0 11px 5px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-ui); font-size: 10.5px; letter-spacing: .06em;
+  color: var(--fg-faint);
+}
+.rev-head .rv-date { flex: none; }
+.rev-head .rv-title { flex: 1; min-width: 0; }
+.rev-head .rv-state { flex: none; }
+
 .rev-list { max-height: 56vh; overflow-y: auto; }
 .rev-list button {
   display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;

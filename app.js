@@ -22,7 +22,7 @@ const API = 'https://laws.e-gov.go.jp/api/2';
  * 画面に出しておけば一目で分かる。publish.js が sw.js と食い違っていないかを
  * 確かめるので、片方だけ上げ忘れることはない。
  */
-const APP_VERSION = 'v94';
+const APP_VERSION = 'v95';
 
 /* ---------------------------------------------------------------- 小道具 */
 
@@ -3323,7 +3323,8 @@ async function openRevisions(lawId) {
     const b = document.createElement('button');
     b.type = 'button';
     b.innerHTML = `<span class="rv-date">${esc(r.amendment_enforcement_date)}</span>`
-      + `<span class="rv-title">${esc(r.amendment_law_title || '')}</span>`
+      // 改正法の名前が入っていない版もある。空欄にすると行がずれて見える
+      + `<span class="rv-title">${esc(r.amendment_law_title || '（改正法の名前なし）')}</span>`
       + `<span class="rv-state ${mine ? 'now' : future ? 'future' : 'past'}">`
       + (mine ? '手元にある' : future ? '未施行' : '施行済み') + '</span>';
     if (mine) b.disabled = true;
@@ -3365,7 +3366,12 @@ async function takeRevision(base, baseTitle, baseLaw, rev) {
 
 function amendTitle(a) {
   const head = a.kind === 'behind' ? '新しい版が出ています' : '未施行の改正があります';
-  return head + '　施行 ' + a.date + (a.title ? '　' + a.title : '');
+  /*
+   * a.title は「この法令を改正した法律」の名前である。たとえば破産法なら
+   * 「民事訴訟法等の一部を改正する法律」が入る。そのまま並べると、別の法令の
+   * 話をしているように見えるので、何の名前かを添える。
+   */
+  return head + '　施行 ' + a.date + (a.title ? '　改正法: ' + a.title : '');
 }
 
 /* ------------------------------------------------------------------ 目次 */
