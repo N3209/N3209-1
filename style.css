@@ -213,7 +213,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   border: 1px solid var(--line); background: var(--bg-elev); color: var(--fg);
   border-radius: 9px; padding: 9px 11px; margin-bottom: 6px; cursor: pointer; font: inherit;
 }
-.rev-list button:hover { background: var(--bg-hover); }
+
 .rev-list button[disabled] { cursor: default; opacity: .75; }
 .rev-list .rv-date { flex: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rev-list .rv-title { flex: 1; min-width: 0; font-size: 12px; color: var(--fg-dim);
@@ -570,7 +570,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   display: flex; align-items: center; gap: 6px;
   padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; line-height: 1.45;
 }
-.law-list li:hover { background: var(--bg-hover); }
+
 .law-list li.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .law-list .law-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* つまんで動かすための取っ手。押す先を分けておくと、
@@ -592,7 +592,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   -webkit-touch-callout: none;
   opacity: 0;
 }
-.law-list li:hover .grip { opacity: 1; }
+
 
 /*
  * つまんでいることを、周りの変化で伝える。
@@ -623,8 +623,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 
 .law-list .del { border: none; background: none; color: var(--fg-faint); cursor: pointer; font-size: 15px; padding: 0 2px; opacity: 0; }
-.law-list li:hover .del { opacity: 1; }
-.law-list .del:hover { color: #c0392b; }
+/*
+ * 削除はホバーでしか出ない作りだった。指にはホバーが無いので、ホバーを
+ * カーソル端末だけに限った時点で永久に見えなくなる。触る端末では常に出す。
+ * 置く場所は上の規則より後。前に置くと、あとの opacity: 0 に負ける。
+ */
+@media (hover: none) {
+  .law-list .del { opacity: .55; }
+}
+
+
 
 /* ------------------------------------------------------------------ toc */
 
@@ -632,7 +640,7 @@ body.resizing { cursor: col-resize; user-select: none; }
   padding: 5px 6px; border-radius: 6px; cursor: pointer;
   font-size: 13px; line-height: 1.5; display: flex; gap: 8px; align-items: baseline;
 }
-.toc-list li:hover { background: var(--bg-hover); }
+
 .toc-list .t { flex: 1; min-width: 0; }
 .toc-list .range { color: var(--fg-faint); font-size: 11px; white-space: nowrap; font-family: var(--font-ui); }
 .toc-list .lv1 { font-weight: 700; margin-top: 8px; }
@@ -667,7 +675,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .find-list li {
   padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
 }
-.find-list li:hover { background: var(--bg-hover); }
+
 .find-list li.current { background: var(--accent-bg); }
 .find-list .where { font-size: 11px; color: var(--fg-faint); }
 .find-list .where .lawname { color: var(--accent); }
@@ -688,7 +696,7 @@ mark.hit.cur { background: #ffbf5e; box-shadow: 0 0 0 2px #ffbf5e; }
   padding: 6px 8px; border-radius: 6px; cursor: pointer;
   font-size: 13px; display: flex; align-items: center; gap: 8px;
 }
-.mark-list li:hover { background: var(--bg-hover); }
+
 .mark-list .sw { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.14); flex: none; }
 .mark-list .n { color: var(--fg-faint); font-size: 12px; margin-left: auto; }
 .sub-head { font-size: 11px; letter-spacing: .08em; color: var(--fg-dim); margin: 14px 0 6px; }
@@ -1211,7 +1219,7 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   display: flex; align-items: center; gap: 10px;
   padding: 9px 10px; border-radius: 8px; border: 1px solid transparent;
 }
-.add-results .r:hover, .find-results .r:hover { background: var(--bg-panel); border-color: var(--line); }
+
 .add-results .r .info { flex: 1; min-width: 0; }
 .add-results .r .name { font-size: 14px; }
 .add-results .r .sub, .find-results .r .sub { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
@@ -1308,4 +1316,25 @@ dialog::backdrop { background: rgba(16,24,40,.35); }
   #memo-input {
     font-size: 16px;
   }
+}
+
+/*
+ * 一覧の行のホバー。カーソルのある端末だけに掛ける。
+ *
+ * 指で触る端末では、触った行に色が残る。スクロールしようとして触ると、
+ * 行が光るだけで何も起きないように見える（実際そう受け取られた）。
+ * 指にカーソルは無いので、そもそも掛ける意味がない。
+ * いま開いている法令は .active で示しているので、見分けには困らない。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .rev-list button:hover { background: var(--bg-hover); }
+  .law-list li:hover { background: var(--bg-hover); }
+  .law-list li:hover .grip { opacity: 1; }
+  .law-list li:hover .del { opacity: 1; }
+  .law-list .del:hover { color: #c0392b; }
+  .toc-list li:hover { background: var(--bg-hover); }
+  .find-list li:hover { background: var(--bg-hover); }
+  .mark-list li:hover { background: var(--bg-hover); }
+  .add-results .r:hover,
+  .find-results .r:hover { background: var(--bg-panel); border-color: var(--line); }
 }
