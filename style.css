@@ -533,7 +533,28 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sheet-pane .find { flex: none; margin-top: 10px; }
 .sheet-pane .find input { height: 40px; font-size: 15px; }
 
-.tab-body { flex: 1; overflow-y: auto; background: var(--bg-elev); border-top: 1px solid var(--line); padding: 10px; }
+/*
+ * min-height: 0 を外さない。
+ *
+ * 縦並びの flex では、子の min-height は既定で auto（＝中身の高さ以上）に
+ * なる。これが無いと、法令が増えたときに中身の高さまで伸びてしまい、
+ * overflow-y: auto が効かない。溢れた結果、指に反応するのは本文の
+ * スクロールだけになり、一覧を下まで見られなくなる。
+ */
+/*
+ * overscroll-behavior: contain を外さない。
+ *
+ * これが無いと、一覧を端まで動かしたときにスクロールが外へ繋がり、
+ * 後ろの本文が動く。左ペインを読んでいるつもりで本文が動くと、
+ * 一覧が動かないように感じる。
+ *
+ * min-height: 0 は、縦並びの flex で縮めるために入れている。
+ * overflow を持つ枠には自動で効くが、明示しておく方が読み取りやすい。
+ */
+.tab-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--bg-elev); border-top: 1px solid var(--line); padding: 10px;
+}
 
 .filter {
   width: 100%; height: 30px; margin-bottom: 8px;
